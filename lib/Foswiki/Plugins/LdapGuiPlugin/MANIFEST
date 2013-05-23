@@ -1,0 +1,6 @@
+!noci
+data/System/LdapGuiPlugin.txt 0644 Documentation page
+data/System/VarEXAMPLETAG.txt 0644 Tag documentation
+data/Sandbox/PluginTestLdapGuiPlugin.txt 0644 Examples
+lib/Foswiki/Plugins/LdapGuiPlugin.pm 0444 Perl module
+lib/Foswiki/Plugins/LdapGuiPlugin/Config.spec 0444 Configuration
