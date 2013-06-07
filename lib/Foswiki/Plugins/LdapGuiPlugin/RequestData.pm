@@ -45,8 +45,7 @@ sub new {
         memberGroups     => [],
         errors           => $errObject,
         groupDN          => [],
-        attributesToHash =>
-          { 'userpassword' => [ 'sha', 'ssha', 'md5', 'smd5', 'crypt' ] }
+        attributesToHash => {}
 
           #mode				=> ''
     };
@@ -188,8 +187,9 @@ sub init {
             }
             else
             { #it exists in the set of valid attributes, is not ignored and no objectclass... that MUST be a valid attribute
-                if ( exists $this->{attributesToHash}->{ lc($requestParam) } ) {
-                    my $password = Foswiki::Plugins::LdapGuiPlugin::Hash->new();
+                if ( exists $this->{attributesToHash}->{ lc($requestParam) } )
+                {    #should it get hashed?
+                    my $hash = Foswiki::Plugins::LdapGuiPlugin::Hash->new();
                     $attributes->{$requestParam} = [];
                     if (
                         scalar
@@ -201,7 +201,7 @@ sub init {
                         foreach (@$methods) {
                             my $pw = $query->{param}->{$requestParam}[0];
                             push @{ $attributes->{$requestParam} },
-                              $password->getHash( $pw, $_ );
+                              $hash->getHash( $pw, $_ );
                         }
                     }
                     else {
@@ -372,7 +372,7 @@ sub _processOptions {
           $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiUserBaseAliases}
           ##do sth with this
     }
-    if ( $this->{options}->hasAttributeHashOptions ) {
+    if ( $this->{options}->hasToHashAttributes ) {
         $this->{attributesToHash} = $this->{options}->getAttributesToHash();
         ##do sth with this
     }
@@ -649,6 +649,23 @@ sub debugWriteOut {
     }
     $this->{errors}->writeErrorsToDebug();
     return 1;
+}
+
+sub getContent {
+    my $this       = shift;
+    my $attributes = $this->{attributes};
+    my $content    = '';
+    use URI::Escape;
+    foreach my $key ( keys %{$attributes} ) {
+        foreach my $data ( @{ $attributes->{$key} } ) {
+            $key     = uri_escape($key);
+            $data    = uri_escape($data);
+            $content = $content . $key . '=' . $data . '&';
+        }
+    }
+    $content =~ s/&$//;
+    Foswiki::Func::writeDebug("CONTENT: $content");
+    return $content;
 }
 
 ###push that to util or sth

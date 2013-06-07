@@ -30,22 +30,48 @@ sub new {
         query        => $query,
         options      => {},
         errors       => $errObject,
+        validOptions => {},
         validOptions => {
-            'ldapguiglue'          => undef,
-            'ldapguiaddtogroup'    => undef,
-            'ldapguisubtree'       => undef,
-            'ldapguiaddtouserbase' => undef
+            'ldapguiglue'          => 'ldapguiglue',
+            'ldapguiaddtogroup'    => 'ldapguiaddtogroup',
+            'ldapguisubtree'       => 'ldapguisubtree',
+            'ldapguitohash'        => 'ldapguitohash',
+            'ldapguiaddtouserbase' => 'ldapguiaddtouserbase',
+            'ldapguiignore'        => 'ldapguiignore'
         }
     };
 
     bless $this, $class;
 
-    $this->_parseQueryForOptions();
+    if ( $this->_parseQuery() ) {
+
+    }
+    else {
+        $this->{errors}->addError(
+            'ERROR_WHILE_PARSING_QUERY_FOR_OPTIONS',
+            [
+'There was an error while parsing the query for option parameters.',
+'Note that giving no options can not be the reason of this error.',
+                'check for syntax errors'
+            ]
+        );
+    }
+
+    #$this->_parseQueryForOptions();
 
     return $this;
 }
 
-sub _parseQueryForOptions {
+=pod
+---++ Private method _parseQuery ( $query ) -> $boolean
+
+Searches the query for valid options and fills the object attributes with data.
+
+Returns true on success, false otherwise.
+
+=cut
+
+sub _parseQuery {
     my $this  = shift;
     my $query = $this->{query};
 
@@ -55,69 +81,192 @@ sub _parseQueryForOptions {
         return 0;
     }
 
-    return 1 unless defined( $this->{query}->{param}->{option} );
+    # if option renaming possibility gets implemented/needed validOptions just
+    # needs to be replaced by a Foswiki{cfg} hash if actually someone would
+    # build a schema where something collides...
+    my $glueOptionName     = lc $this->{validOptions}->{'ldapguiglue'};
+    my $toHashOptionName   = lc $this->{validOptions}->{'ldapguitohash'};
+    my $groupAddOptionName = lc $this->{validOptions}->{'ldapguiaddtogroup'};
+    my $subtreeOptionName  = lc $this->{validOptions}->{'ldapguisubtree'};
+    my $ignoreOptionName   = lc $this->{validOptions}->{'ldapguiignore'};
+    my $userBaseOptionName = lc $this->{validOptions}->{'ldapguiaddtouserbase'};
 
-    my $optList = [];
-    if ( @{ $this->{query}->{param}->{option} } )
-    {    #see if options are present in the form request
-        my $optCount = scalar @{ $query->{param}->{option} };
-        if ( $optCount > 0 ) {
-            if ( $optCount == 1 ) {
-                $optList = [ split( /\s*,\s*/, $query->{param}->{option}[0] ) ];
-            }
-            else {
-                push( @$optList, trimSpaces($_) )
-                  foreach @{ $query->{param}->{option} };
-            }
+    #get form options hash, this does not need to be case sensitive
+
+    my $options = {};
+    foreach my $querykey ( keys $query->{param} ) {
+        my $qk = lc $querykey;
+        if ( exists $this->{validOptions}->{$qk} ) {
+
+            # the query key is a valid option name
+            #so push data lists to the hash foreach query key-value pair
+            $options->{$qk} = $query->{param}->{$querykey};
+
+            #foreach $dataListRef ( @{$query->{param}->{$querykey}} ) {
+            #    push @{$options->{$qk}}, $dataListRef;
+            #}
         }
     }
 
-    foreach my $option (@$optList)
-    {    #fill options hash with valid options (those options we expect)
-            #Foswiki::Func::writeDebug("optionsc: $option");
-        my ( $o, $v ) = split( /\s*=\s*/, $option );
+    #do we have options? No options is ok, so return 1 if none were found.
+    return 1 unless ( scalar( keys %$options ) );
 
-        #Foswiki::Func::writeDebug("optionsc: $o     =     $v");
-        $this->addOption( $o, $v );
+#if we have options, bring the data in the right form and fill data structure
+#sanity checks happen later in requestData, here only the options and the right form are important
+#do that for each possible valid option (because the forms could differ)
+
+#ldapguiglue options consist only of attribute names -> result is a single list
+# because it gets configured in Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiGlue}
+# we can do sanity checks here
+#my $ldapGuiGlue = $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiGlue};
+    if ( exists $options->{$glueOptionName} ) {
+        if ( defined $options->{$glueOptionName} ) {
+
+            if (
+                $this->_parseListOption(
+                    $glueOptionName, $options->{$glueOptionName}
+                )
+              )
+            {
+                $this->{glueRules} = $this->{options}->{$glueOptionName};
+            }
+            else {
+                $this->{errors}
+                  ->addError( 'ERROR_WHILE_PARSING_GLUERULES', [] );
+            }
+        }
+        else {
+            $this->{errors}->addError(
+                'NO_GLUE_ATTRIBUTES_DEFINED',
+                [
+"No LdapGuiGlue attributes were found but the option parameter exists."
+                ]
+            );
+        }
     }
 
-    foreach my $k ( keys $this->{options} ) {
-        Foswiki::Func::writeDebug("OPT: $k");
-        Foswiki::Func::writeDebug("PARAM: $_")
-          foreach ( @{ $this->{options}->{$k} } );
+ #ldapguitohash options have the syntax: attributename=algorithm1,algorithm2,...
+ #result is hash  { attributename => [alg1, alg2, ...] }
+ #also sanity checks happen later in requestdata and hash (atm)
+    if ( exists $options->{$toHashOptionName} ) {
+        if ( defined $options->{$toHashOptionName} ) {
+            my $data   = $options->{$toHashOptionName};
+            my $result = {};
+            foreach (@$data) {
+                my $split = [ split m/\s*=\s*/, ( lc $_ ) ];
+
+# split result must be in the form of ['attributename','alg1,alg2,alg3,...,algN'] and not empty
+                unless ( ( defined $split ) || ( scalar @$split == 2 ) ) {
+                    $this->{errors}->addError( 'TOHASH_MANGLED_SYNTAX',
+                        ["Wrong LdapGuiToHash syntax for expression: $_"] );
+                }
+
+                my $attributeName = lc $split->[0];
+                my $algorithms = [ split m/\s*,\s*/, $split->[1] ];
+
+                Foswiki::Func::writeDebug(
+                    "TOHASH ATTR NAME: $attributeName      METHOD: $_")
+                  foreach @$algorithms;
+
+                if ($attributeName) {
+                    if ( scalar @$algorithms ) {
+                        $algorithms =
+                          [ keys %{ { map { $_ => 1 } @$algorithms } } ];
+                        $result->{$attributeName} = $algorithms;
+                    }
+                    else {
+                        $this->{errors}->addError(
+                            'TOHASH_NO_METHODS_GIVEN',
+                            [
+"Can not find hash method names for attribute $attributeName."
+                            ]
+                        );
+                    }
+                }
+
+            }
+            unless ( scalar keys %{$result} ) {
+                $this->{errors}->addError( 'TOHASH_NO_RESULTS_FOUND',
+                    ["No result could be found but the option exists."] );
+                return 0;
+            }
+            $this->{toHash} = $result;
+            $this->{options}->{$toHashOptionName} = $result;
+        }
+        else {
+            $this->{errors}->addError(
+                'NO_TOHASH_ATTRIBUTES_DEFINED',
+                [
+"No LdapGuiToHash attributes were found but the option parameter exists."
+                ]
+            );
+        }
     }
 
+#ldapguiglue options consist only of attribute names -> result is a single list
+# because it gets configured in Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiGlue}
+# we can do sanity checks here
+#my $ldapGuiGlue = $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiGlue};
+    if ( exists $options->{$userBaseOptionName} ) {
+        if ( defined $options->{$userBaseOptionName} ) {
+
+            if (
+                $this->_parseListOption(
+                    $userBaseOptionName, $options->{$userBaseOptionName}
+                )
+              )
+            {
+                $this->{userBase} = $this->{options}->{$userBaseOptionName};
+            }
+            else {
+                $this->{errors}
+                  ->addError( 'ERROR_WHILE_PARSING_USERBASE_OPTION', [] );
+            }
+        }
+        else {
+            $this->{errors}->addError(
+                'NO_GLUE_ATTRIBUTES_DEFINED',
+                [
+"No LdapGuiGlue attributes were found but the option parameter exists."
+                ]
+            );
+        }
+    }
+
+    return 0 if $this->hasError;
     return 1;
 }
 
 =pod
 
+
+
 =cut
 
-sub addOption {
-    my $this   = shift;
-    my $option = shift;
-    my $value  = shift;
-    unless ($option) {
-        $this->{errors}
-          ->addError( 'NO_OPTION', ['found no option on addOption() call'] );
+sub _parseListOption {
+    my $this       = shift;
+    my $optionName = shift;
+    my $data       = shift;
+
+    # create a result vor optionName
+
+    my $result = [];
+    foreach (@$data) {
+        my $attributes = [ split /\s*,\s*/, ( lc $_ ) ];
+        $result =
+          [ keys %{ { map { $_ => 1 } @$result, @$attributes } } ];    #merge
+    }
+    $result = [ keys %{ { map { $_ => 1 } @$result } } ]; #get rid of duplicates
+    unless ( scalar @$result ) {
+        $this->{errors}->addError(
+            'NO_GLUE_ATTRIBUTES_FOUND',
+            [
+"No attributes were found but the option parameter exists and values were defined."
+            ]
+        );
         return 0;
     }
-    unless ($value) {
-        $this->{errors}
-          ->addError( 'NO_VALUE_FOR_OPTION', ["No value found for $option"] );
-    }
-
-    if ( exists $this->{validOptions}->{$option} ) {
-        push @{ $this->{options}->{$option} }, $value;
-    }
-    else {
-
-        #$errors->{'INVALID_OPTION'} = "$o is not a valid option.";
-        $this->{errors}
-          ->addError( 'INVALID_OPTION', ["$option is not a valid option."] );
-        return 0;
-    }
+    $this->{options}->{$optionName} = $result;
     return 1;
 }
 
@@ -231,11 +380,13 @@ sub getRequestedGlueRules {
 
 =cut
 
-sub hasAttributeHashOptions {
+sub hasToHashAttributes {
     my $this = shift;
 
-#return scalar ( keys $this->{options}->{'ldapguihashattr'} ) if defined $this->{options}->{'ldapguihashattr'};
-    return 0;
+    return 0
+      unless ( defined $this->{options}->{'ldapguitohash'}
+        and scalar( keys $this->{options}->{'ldapguitohash'} ) );
+    return 1;
 }
 
 =pod
@@ -244,8 +395,8 @@ sub hasAttributeHashOptions {
 
 sub getAttributesToHash {
     my $this = shift;
-    if ( $this->hasAttributeHashOptions() ) {
-        return $this->{options}->{'ldapguihashattr'};
+    if ( $this->hasToHashAttributes() ) {
+        return $this->{options}->{'ldapguitohash'};
     }
     return {};
 }
@@ -278,4 +429,3 @@ sub hasError {
 }
 
 1;
-

@@ -75,7 +75,40 @@ sub getErrorString {
 }
 
 sub errorRenderHTML {
-    return 0;
+    my $this  = shift;
+    my $web   = shift;
+    my $topic = shift;
+    my $count = 0;
+    my $linkback =
+        $Foswiki::{cfg}{DefaultUrlHost}
+      . $Foswiki::{cfg}{ScriptUrlPaths}{view}
+      . "/$topic";
+    my $linebreak = '<br/>';
+    my $insert =
+'<h2>There was an error while processing your request. Please contact your administrator and give him the information listed below:</h2><br/>';
+    $insert = $insert
+      . "<h3>Total number of errors: $this->{errorCount}</h3>$linebreak Error history:$linebreak $linebreak";
+
+    foreach my $error ( @{ $this->{errors} } ) {
+        $insert =
+            $insert
+          . "Error number: $count $linebreak Error code: "
+          . $error->{error}
+          . $linebreak
+          . "Message:$linebreak";
+        foreach my $msg ( @{ $error->{msg} } ) {
+            $insert = $insert . "$msg $linebreak";
+        }
+        $count++;
+    }
+    $insert =
+      $insert . $linebreak . $linebreak . "<a href=\"$linkback\">Go back</a>";
+    use CGI;
+    my $page =
+        CGI::start_html( -title => 'LDAP error page' )
+      . $insert
+      . CGI::end_html();
+    return $page;
 }
 
 1;

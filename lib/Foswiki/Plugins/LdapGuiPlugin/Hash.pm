@@ -53,33 +53,19 @@ sub new {
             },
             'ssha' => sub {
                 my $text = shift;
-                my $salt;
-                if ( open( RAND, "/dev/random/" ) ) {
-                    read( RAND, $salt, 4 );
-                    close(RAND);
-                }
-                else {
-
-                    #TODO
-                }
+                my $salt = getSalt(4);
                 my $ssha = Digest::SHA->new;
                 $ssha->add($text);
+                $ssha->add($salt);
                 my $digest = encode_base64( $ssha->digest . $salt, '' );
                 return '{SSHA}' . $digest;
             },
             'smd5' => sub {
                 my $text = shift;
-                my $salt;
-                if ( open( RAND, "/dev/random/" ) ) {
-                    read( RAND, $salt, 4 );
-                    close(RAND);
-                }
-                else {
-                    $salt = 'abcd';
-                }
+                my $salt = getSalt(4);
                 my $smd5 = Digest::MD5->new;
                 $smd5->add($text);
-                $smd5->add($salt) if $salt;
+                $smd5->add($salt);
                 my $digest = encode_base64( $smd5->digest . $salt, '' );
                 return '{SMD5}' . $digest;
             },
@@ -112,6 +98,10 @@ sub getHash {
     if ( exists $this->{hashAlgorithms}->{ lc $alg } ) {
         return $this->{hashAlgorithms}->{ lc $alg }->($text);
     }
+    else {
+
+        #die brutally
+    }
 }
 
 =pod
@@ -135,6 +125,32 @@ sub addAlgorithm {
 
     $this->{hashAlgorithms}->{ lc $name } = $algorithm;
     return 1;
+}
+
+=pod
+
+---++ Private method getSalt ($length) -> $salt
+
+Returns a salt value with the given length of bytes
+
+=cut
+
+sub getSalt {
+    my $len = shift;
+    my $salt;
+    if ( open( my $RAND, '<', "/dev/random/" ) ) {
+        read( $RAND, $salt, $len );
+        close($RAND);
+        return $salt;
+    }
+    else {
+        my @bytes = ();
+        for my $i ( 1 .. $len ) {
+            push( @bytes, rand(255) );
+        }
+        $salt = pack( 'C*', @bytes );
+    }
+    return $salt;
 }
 
 1;
