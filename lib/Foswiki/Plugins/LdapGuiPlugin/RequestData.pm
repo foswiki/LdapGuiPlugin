@@ -56,8 +56,13 @@ sub new {
             if ( $this->init( $query, $option, $schema ) ) {
             }
             else {
-                $this->{errors}->addError( 'CONSTRUCTOR_INIT_FAILED',
-                    ['Initializing request data failed at construction.'] );
+                $this->{errors}->addError(
+                    'CONSTRUCTOR_INIT_FAILED',
+                    [
+                        'Initializing request data failed at construction.',
+'Something with the options, or schema retrieval went wrong.'
+                    ]
+                );
             }
         }
     }
@@ -88,11 +93,11 @@ sub init {
     my $schema        = shift;
 
     #$this->{mode} = shift;
-    return 0 unless $schema && $query;
+    return 0 unless ( ( defined $schema ) && ( defined $query ) );
 
     my $ignore        = $this->{ignoreAttributes};
     my $attributes    = {};
-    my $objectClasses = [];
+    my $objectClasses = ['top'];
     my $options       = {};
     my $other         = {};
 
@@ -114,7 +119,7 @@ sub init {
         #Foswiki::Func::writeDebug("ATTRNAMES:            $_->{name}");
     }
 
-##options can change data, get them before
+##options can change data -> process them before the rest
 
     if ( defined $requestOption ) {
         return 0 if ( $this->hasError || $requestOption->hasError );
@@ -130,7 +135,7 @@ sub init {
     }
 
 ##//options
-## getdata
+## getdata - messy stuff
 
     foreach my $requestParam ( keys( $query->{param} ) ) {
         my $paramSize = scalar @{ $query->{param}->{$requestParam} };
@@ -146,44 +151,15 @@ sub init {
                     push @{ $this->{memberGroups} }, $_
                       foreach ( @{ $query->{param}->{$requestParam} } );
                 }
-                if ( $paramSize == 1 ) {
-                    $other->{$requestParam} =
-                      [ $query->{param}->{$requestParam}[0] ];
-                }
-                elsif ( $paramSize > 1 ) {
-                    $other->{$requestParam} = $query->{param}->{$requestParam};
-                }
-                else {
-                    $other->{$requestParam} =
-                      [];    #attr is there but no value given
-                }
-
+                $other->{$requestParam} = $query->{param}->{$requestParam};
             }
             elsif (lc($requestParam) eq 'objectclasses'
                 or lc($requestParam) eq 'objectclass' )
             {
-
-    #it exists in the set of valid attributes, is not ignored but an objectclass
-                if ( $paramSize == 1 ) {
-                    $objectClasses = [
-                        split( /\s*,\s*/, $query->{param}->{$requestParam}[0] )
-                    ];
-
-                    #Foswiki::Func::writeDebug("SINGLE: @$objectClasses");
+                #set objectclasses
+                foreach ( @{ $query->{param}->{$requestParam} } ) {
+                    push @$objectClasses, split( /\s*,\s*/, $_ );
                 }
-                elsif ( $paramSize > 1 ) {
-                    foreach ( @{ $query->{param}->{$requestParam} } ) {
-                        push @$objectClasses, trimSpaces($requestParam);
-
-                        #Foswiki::Func::writeDebug("MULTI: @$objectClasses");
-                    }
-                }
-                else {
-
-                    #empty objectClass
-                    $other->{$requestParam} = [];
-                }
-
             }
             else
             { #it exists in the set of valid attributes, is not ignored and no objectclass... that MUST be a valid attribute
@@ -196,8 +172,7 @@ sub init {
                         @{ $this->{attributesToHash}->{ lc($requestParam) } } )
                     {
                         my $methods =
-                          $this->{attributesToHash}
-                          ->{ lc($requestParam) };  #use that inside the foreach
+                          $this->{attributesToHash}->{ lc($requestParam) };
                         foreach (@$methods) {
                             my $pw = $query->{param}->{$requestParam}[0];
                             push @{ $attributes->{$requestParam} },
@@ -205,42 +180,19 @@ sub init {
                         }
                     }
                     else {
-                        push @{ $attributes->{$requestParam} },
-                          $query->{param}->{$requestParam}[0];
-                    }
-                }
-                else {
-                    if ( $paramSize == 1 ) {
-                        my $str = $query->{param}->{$requestParam}[0];
-                        $str =~ s/[[:space:]]+/ /g;
-                        $attributes->{$requestParam} = [ trimSpaces($str) ];
-                    }
-                    elsif ( $paramSize > 1 ) {
                         $attributes->{$requestParam} =
                           $query->{param}->{$requestParam};
                     }
-                    else {
-                        $attributes->{$requestParam} =
-                          [];    #attr is there but no value given
-                    }
                 }
-
+                else {
+                    $attributes->{$requestParam} =
+                      $query->{param}->{$requestParam};
+                }
             }
         }
         else {
-
             #it is something else, not actually needed -> for debugging purposes
-            if ( $paramSize == 1 ) {
-                $other->{$requestParam} =
-                  [ $query->{param}->{$requestParam}[0] ];
-            }
-            elsif ( $paramSize > 1 ) {
-                $other->{$requestParam} = $query->{param}->{$requestParam};
-            }
-            else {
-                $other->{$requestParam} = [];  #attr is there but no value given
-            }
-
+            $other->{$requestParam} = $query->{param}->{$requestParam};
         }
     }
 
@@ -264,16 +216,14 @@ sub init {
             ]
         );
     }
-    else {
 
-        #objectclasses are ok -> check the attributes
-
-    }
+    #attributes dont get checked here
 
     unless ( $this->hasError() ) {
         $this->{attributes} = $attributes;
         $this->{attrLookup} = { map { lc($_) => $_ } keys $this->{attributes} };
         $this->{other}      = $other;
+        $this->{otherLookup}   = { map { lc($_) => $_ } keys $this->{other} };
         $this->{objectClasses} = $objectClasses;
 
         #		$this->{options}           =      $options;
@@ -301,6 +251,11 @@ sub _processOptions {
     my $attributes = shift;
     return 1 unless defined $this->{options};
     my $query = $this->{options}->{query};
+
+    if ( $this->{options}->hasToHashAttributes ) {
+        $this->{attributesToHash} = $this->{options}->getAttributesToHash();
+        ##do sth with this
+    }
 
     if (   $this->{options}->hasGlueRules()
         && $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiGlueAllow} )
@@ -344,9 +299,34 @@ sub _processOptions {
         }
         unless ( $this->hasError() ) {
             foreach ( @{ $ldapGlue->{treeList} } ) {
-                push @{ $attributes->{ $_->{name} } }, $_->{value};
-                Foswiki::Func::writeDebug(
-                    'NAME ' . $_->{name} . 'VAL ' . $_->{value} );
+
+                if ( exists $this->{attributesToHash}->{ lc( $_->{name} ) } )
+                {    #should it get hashed?
+                    my $hash = Foswiki::Plugins::LdapGuiPlugin::Hash->new();
+                    $attributes->{ $_->{name} } = [];
+                    if (
+                        scalar
+                        @{ $this->{attributesToHash}->{ lc( $_->{name} ) } } )
+                    {
+                        my $methods =
+                          $this->{attributesToHash}->{ lc( $_->{name} ) }
+                          ;    #use that inside the foreach
+                        foreach my $method (@$methods) {
+                            my $pw = $_->{value};
+                            push @{ $attributes->{ $_->{name} } },
+                              $hash->getHash( $pw, $method );
+                        }
+                    }
+                    else {
+                        push @{ $attributes->{ $_->{name} } }, $_->{value};
+                    }
+                }
+                else {
+                    push @{ $attributes->{ $_->{name} } }, $_->{value};
+                }
+
+                #Foswiki::Func::writeDebug(
+                #    'NAME ' . $_->{name} . 'VAL ' . $_->{value} );
 
 #unless ( $this->addAttribute($_->{name}, [$_->{value}]) ) {
 #	$this->{errors}->addError('COULD_NOT_ADD_ATTRIBUTE', ["Could not add attribute: $_->{name} , value: $_->{value}"]);
@@ -371,10 +351,6 @@ sub _processOptions {
         my $userBaseAliases =
           $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiUserBaseAliases}
           ##do sth with this
-    }
-    if ( $this->{options}->hasToHashAttributes ) {
-        $this->{attributesToHash} = $this->{options}->getAttributesToHash();
-        ##do sth with this
     }
 
     return 0 if ( $this->hasError );
@@ -427,22 +403,14 @@ sub getOtherByName {
     my $this = shift;
     my $name = shift;
 
-    if ( exists $this->{other} ) {
-        if ( exists $this->{other}->{$name} ) {
-            return $this->{other}->{$name}->[0];
-        }
-        else {
-            $this->{errors}->addError( 'NOT_FOUND_IN_NON_ATTRIBUTES',
-                ['getOtherByName: not found'] );
-            return undef;
-        }
-    }
-    else {
-        $this->{errors}->addError( 'NO_NON_ATTRIBUTES',
-            ['getOtherByName: no non attributes where found.'] );
+    unless ( exists $this->{otherLookup} ) {
         return undef;
     }
 
+    if ( exists $this->{otherLookup}->{ lc $name } ) {
+        my $attr = $this->{otherLookup}->{ lc $name };
+        return $this->{other}->{$attr};
+    }
     return undef;
 }
 

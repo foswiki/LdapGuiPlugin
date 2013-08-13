@@ -3,11 +3,6 @@ package Foswiki::Plugins::LdapGuiPlugin::Option;
 use strict;
 use warnings;
 
-use Net::LDAP qw(LDAP_REFERRAL);
-use Net::LDAP::Extension::SetPassword;
-use Net::LDAP::Entry;
-use Net::LDAP::LDIF;
-use Net::LDAP::Schema;
 use Foswiki::Plugins::LdapGuiPlugin::Error;
 
 =pod
@@ -37,7 +32,9 @@ sub new {
             'ldapguisubtree'       => 'ldapguisubtree',
             'ldapguitohash'        => 'ldapguitohash',
             'ldapguiaddtouserbase' => 'ldapguiaddtouserbase',
-            'ldapguiignore'        => 'ldapguiignore'
+            'ldapguiignore'        => 'ldapguiignore',
+            'ldapguimodifyadd'     => 'ldapguimodifyadd',
+            'ldapguimodifydel'     => 'ldapguimodifydel'
         }
     };
 
@@ -90,6 +87,8 @@ sub _parseQuery {
     my $subtreeOptionName  = lc $this->{validOptions}->{'ldapguisubtree'};
     my $ignoreOptionName   = lc $this->{validOptions}->{'ldapguiignore'};
     my $userBaseOptionName = lc $this->{validOptions}->{'ldapguiaddtouserbase'};
+    my $modifyAddName      = lc $this->{validOptions}->{'ldapguimodifyadd'};
+    my $modifyDelName      = lc $this->{validOptions}->{'ldapguimodifydel'};
 
     #get form options hash, this does not need to be case sensitive
 
@@ -121,7 +120,6 @@ sub _parseQuery {
 #my $ldapGuiGlue = $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiGlue};
     if ( exists $options->{$glueOptionName} ) {
         if ( defined $options->{$glueOptionName} ) {
-
             if (
                 $this->_parseListOption(
                     $glueOptionName, $options->{$glueOptionName}
@@ -225,9 +223,62 @@ sub _parseQuery {
         }
         else {
             $this->{errors}->addError(
-                'NO_GLUE_ATTRIBUTES_DEFINED',
+                'NO_USERBASE_ATTRIBUTES_DEFINED',
                 [
-"No LdapGuiGlue attributes were found but the option parameter exists."
+"No userbase attributes were found but the option parameter exists."
+                ]
+            );
+        }
+    }
+
+#ldapguimodify: replace is default, only delete and add must be specified by the GUI
+#both are list options -> get them
+    if ( exists $options->{$modifyAddName} ) {
+        if ( defined $options->{$modifyAddName} ) {
+
+            if (
+                $this->_parseListOption(
+                    $modifyAddName, $options->{$modifyAddName}
+                )
+              )
+            {
+                $this->{modifyDdd} = $this->{options}->{$modifyAddName};
+            }
+            else {
+                $this->{errors}
+                  ->addError( 'ERROR_WHILE_PARSING_MODIFY_OPTION', [] );
+            }
+        }
+        else {
+            $this->{errors}->addError(
+                'NO_MODIFY_ATTRIBUTES_DEFINED',
+                [
+"No Modify attributes were found but the option parameter exists."
+                ]
+            );
+        }
+    }
+    if ( exists $options->{$modifyDelName} ) {
+        if ( defined $options->{$modifyDelName} ) {
+
+            if (
+                $this->_parseListOption(
+                    $modifyDelName, $options->{$modifyDelName}
+                )
+              )
+            {
+                $this->{modifyDel} = $this->{options}->{$modifyDelName};
+            }
+            else {
+                $this->{errors}
+                  ->addError( 'ERROR_WHILE_PARSING_MODIFY_OPTION', [] );
+            }
+        }
+        else {
+            $this->{errors}->addError(
+                'NO_MODIFY_ATTRIBUTES_DEFINED',
+                [
+"No Modify attributes were found but the option parameter exists."
                 ]
             );
         }
@@ -239,7 +290,38 @@ sub _parseQuery {
 
 =pod
 
+=cut
 
+sub hasModifyOptions {
+    my $this = shift;
+    return ( ( scalar( keys @{ $this->{options}->{'ldapguimodifyadd'} } > 0 ) )
+          || ( scalar( keys @{ $this->{options}->{'ldapguimodifydel'} } > 0 ) )
+    );
+}
+
+=pod
+
+=cut
+
+sub getModifyOptions {
+    my $this = shift;
+    my $opts = {};
+    if ( $this->hasModifyOptions() ) {
+        $opts->{add} =
+          { map { lc $_ => undef }
+              @{ $this->{options}->{'ldapguimodifyadd'} } };
+        $opts->{del} =
+          { map { lc $_ => undef }
+              @{ $this->{options}->{'ldapguimodifydel'} } };
+    }
+    else {
+        $opts->{add} = {};
+        $opts->{del} = {};
+    }
+    return $opts;
+}
+
+=pod
 
 =cut
 
@@ -429,3 +511,4 @@ sub hasError {
 }
 
 1;
+

@@ -59,8 +59,8 @@ sub parseRules {
                   ->addError( 'NO_GLUE_RULE', ["No such rule $subject."] );
             }
             else {
-                $subject = $ruleKeys{ $subject
-                }; #LDAP attribute names are case insensitive, glue rule-attribute names too.
+                $subject = $ruleKeys{ $subject }
+                  ; #LDAP attribute names are case insensitive, glue rule-attribute names too.
             }
         }
 
@@ -281,7 +281,7 @@ sub glue {
                 $me->appendValue( $this->glue($_) . $delimiter );
             }
 
-#TODO:     return $me->getValue;   #<- this would be enough if delimiters and so on were bound to the nodes directly. I'm too lazy right now :/
+#TODO:     return $me->getValue;   #<- this would be enough if delimiters and so on were bound to the nodes directly.
             $me->applyFormat();
             $val = $me->getValue();
         }

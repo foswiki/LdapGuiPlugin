@@ -43,6 +43,7 @@ Returns true if the object contains at least on error.
 
 sub hasError {
     my $this = shift;
+    return 0 if ( $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiTestMode} );
     return ( $this->{errorCount} > 0 ) || ( scalar @{ $this->{errors} } > 0 );
 }
 
@@ -74,6 +75,38 @@ sub getErrorString {
     return 0;
 }
 
+=pod
+sub errorRenderHTML {
+    my $this = shift;
+    my $web = shift;
+    my $topic = shift;
+    my $count = 0;
+    my $linkback = $Foswiki::{cfg}{DefaultUrlHost} . $Foswiki::{cfg}{ScriptUrlPaths}{view} . "/$web.$topic";
+    my $linebreak = '<br/>';
+    my $insert = '';
+	if ( $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiTestMode} ) {
+        $insert = '<h2>TESTMODE</h2><br/>';
+	} else {
+		$insert = '<h2>There was an error while processing your request. Please contact your administrator and give him the information listed below:</h2><br/>';
+    	$insert = $insert . "<h3>Total number of errors: $this->{errorCount}</h3>$linebreak Error history:$linebreak $linebreak";
+	}
+    foreach my $error ( @{$this->{errors}} ) {
+        $insert = $insert . "Error number: $count $linebreak Error code: "
+                              . $error->{error} . $linebreak . "Message:$linebreak";
+        foreach my $msg ( @{$error->{msg}} ) {
+            $insert = $insert . "$msg $linebreak";
+        }
+    $count ++;
+    }
+    $insert = $insert . $linebreak. $linebreak ."<a href=\"$linkback\">Go back</a>";
+    use CGI;
+    my $page = CGI::start_html( 	-title => 'LDAP error page'
+                                 ) . $insert
+                                   . CGI::end_html();
+    return $page;
+}
+=cut
+
 sub errorRenderHTML {
     my $this  = shift;
     my $web   = shift;
@@ -82,27 +115,39 @@ sub errorRenderHTML {
     my $linkback =
         $Foswiki::{cfg}{DefaultUrlHost}
       . $Foswiki::{cfg}{ScriptUrlPaths}{view}
-      . "/$topic";
-    my $linebreak = '<br/>';
-    my $insert =
-'<h2>There was an error while processing your request. Please contact your administrator and give him the information listed below:</h2><br/>';
-    $insert = $insert
-      . "<h3>Total number of errors: $this->{errorCount}</h3>$linebreak Error history:$linebreak $linebreak";
+      . "/$web.$topic";
 
+    my $insert = '';
+    if ( $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiTestMode} ) {
+        $insert = '<h2>TESTMODE</h2><br/>';
+    }
+    else {
+        $insert =
+"<h2>There was an error while processing your request. Please contact your administrator and give him the information listed below:</h2><br/>";
+        $insert =
+            $insert
+          . '<h3>Total number of errors: '
+          . $this->{errorCount}
+          . '</h3><br/> Error history:<br/><br/>';
+    }
+    $insert = $insert
+      . '<table border="1" style="vertical-align:top; margin-right:10px; margin-bottom:6px border-collapse: collapse;" cellspacing="0" cellpadding="10">';
     foreach my $error ( @{ $this->{errors} } ) {
         $insert =
             $insert
-          . "Error number: $count $linebreak Error code: "
+          . '<tr><td style="vertical-align: top;">Error number:</td> <td style="vertical-align: top;">'
+          . $count
+          . '</td></tr><tr><td style="vertical-align: top;">Error code:</td><td>'
           . $error->{error}
-          . $linebreak
-          . "Message:$linebreak";
+          . '</td></tr><tr><td style="vertical-align: top;">Message</td><td style="vertical-align: top;">';
         foreach my $msg ( @{ $error->{msg} } ) {
-            $insert = $insert . "$msg $linebreak";
+            $insert = $insert . "$msg <br/>";
         }
+        $insert = $insert . '</td>';
         $count++;
     }
-    $insert =
-      $insert . $linebreak . $linebreak . "<a href=\"$linkback\">Go back</a>";
+    $insert = $insert . '</table>';
+    $insert = $insert . "<br/><br/><a href=\"$linkback\">Go back</a>";
     use CGI;
     my $page =
         CGI::start_html( -title => 'LDAP error page' )

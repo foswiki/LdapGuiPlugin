@@ -50,8 +50,10 @@ sub new {
     my $tlsClientCert;
     my $tlsClientKey;
 
-    if ( ( scalar( keys %{ $Foswiki::cfg{Ldap} } ) )
-        and $Foswiki::cfg{Ldap}{Host} )
+    if (    ( scalar( keys %{ $Foswiki::cfg{Ldap} } ) )
+        and $Foswiki::cfg{Ldap}{Host}
+        and $Foswiki::cfg{Plugins}{LdapGuiPlugin}
+        {LdapGuiUseLdapContribConfiguration} )
     {
         $ServerHost         = $Foswiki::cfg{Ldap}{Host};
         $ServerVersion      = $Foswiki::cfg{Ldap}{Version};
@@ -141,7 +143,10 @@ sub new {
         attributes          => [],
         attributeLookup     => {},
         attributeLookupLC   => {},
-        errors              => $errObject
+        errors              => $errObject,
+
+        #testmode
+        testmode => $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiTestMode}
     };
     bless $this, $class;
 
@@ -272,20 +277,32 @@ sub ldapAddToGroup {
                 $this->ldapDisconnect();
                 return 0;
             }
-            foreach (@$groupDN) {
+
+            if ( $this->{testmode} ) {
+                $this->ldapDisconnect();
+                my $test = [];
+                push @$test, "ldapAddToGroup: Testadd: $_" foreach (@$groupDN);
+
+                #addhash?
+                $this->{errors}->addError( '___TEST___', $test );
+                return 1;
+            }
+            else {
+                foreach (@$groupDN) {
 
 #Foswiki::Func::writeDebug("$_      $groupMemberAttribute        $attributes->{$loginAttr}->[0]");
-                my $mesg = $this->{ldap}->modify( $_, add => $addHash );
+                    my $mesg = $this->{ldap}->modify( $_, add => $addHash );
 
-                if ( $mesg->is_error() ) {
-                    my $errorMessage = $mesg->error();
-                    $this->{errors}->addError(
-                        'ERROR_ON_ADD_TO_GROUP',
-                        [
-                            "ldapAddToGroup: Error on add to $_:",
-                            $errorMessage
-                        ]
-                    );
+                    if ( $mesg->is_error() ) {
+                        my $errorMessage = $mesg->error();
+                        $this->{errors}->addError(
+                            'ERROR_ON_ADD_TO_GROUP',
+                            [
+                                "ldapAddToGroup: Error on add to $_:",
+                                $errorMessage
+                            ]
+                        );
+                    }
                 }
             }
 
@@ -348,16 +365,38 @@ sub ldapAdd {
                 $this->ldapDisconnect();
                 return 0;
             }
+            if ( $this->{testmode} ) {
+                $this->ldapDisconnect();
+                my $test = [
+                    "ldapAdd: Test ldapAdd", "bind against: $bindDN",
+                    "",                      "Entry:",
+                    "",                      "dn: " . $entry->dn()
+                ];
 
-            my $result = $this->{ldap}->add($entry);
-
-            #password is set?
-            if ( $result->is_error() ) {
-                my $errorMessage = $result->error();
-                $this->{errors}->addError( 'ERROR_ON_ADD',
-                    [ 'LdapAdd: Error on add:', $errorMessage ] );
+                foreach my $attribute ( $entry->attributes ) {
+                    my $values = $entry->get_value( $attribute, asref => 1 );
+                    if ( defined $values ) {
+                        foreach my $value (@$values) {
+                            push @$test, "$attribute: $value";
+                        }
+                    }
+                    else {
+                        push @$test, "$attribute:";
+                    }
+                }
+                $this->{errors}->addError( '___TEST___', $test );
+                return 1;
             }
+            else {
+                my $result = $this->{ldap}->add($entry);
 
+                #password is set?
+                if ( $result->is_error() ) {
+                    my $errorMessage = $result->error();
+                    $this->{errors}->addError( 'ERROR_ON_ADD',
+                        [ 'LdapAdd: Error on add:', $errorMessage ] );
+                }
+            }
         }
         else {
             $this->{errors}->addError( 'UNKNOWN_ERROR_ON_CONNECT',
@@ -375,23 +414,16 @@ sub ldapAdd {
 
 }
 
-=pod
-
----++ ObjectMethod ldapModifyReplace ( $bindDN, $password, $dn, \%replaceHash ) -> $boolean
-
-Modify the dn passed in $dn with the replaceHash. This overwrites data and the user specified in bindDN must have write access to $dn.
-
-return 1 on success, 0 otherwise so check the return value or $error->hasError for error checking.
-
-=cut
-
-sub ldapModifyReplace {
+sub ldapModify {
     my $this     = shift;
     my $bindDN   = shift;
     my $password = shift;
     my $dn       = shift;
-    my $replace  = shift;
-
+    my $hash     = shift;
+    my $replace  = $hash->{replace};
+    my $add      = $hash->{add};
+    my $delete   = $hash->{delete};
+    my $delattr  = $hash->{delattr};
     unless ( defined $bindDN and $bindDN ) {
         $this->{errors}->addError( 'LDAPMODIFY_NO_USER',
             ['ldapModifyReplace: No bind dn was passed to LdapAdd'] );
@@ -420,15 +452,83 @@ sub ldapModifyReplace {
                 $this->ldapDisconnect();
                 return 0;
             }
+            if ( $this->{testmode} ) {
+                $this->ldapDisconnect();
+                my $test = [
+                    "ldapModify: Test ldapModify",
+                    "bind against: $bindDN",
+                    "", "Entry and modifcations:",
+                    "", "dn: $dn"
+                ];
+                push @$test, "Attributes to replace:";
+                foreach ( keys %{$replace} ) {
+                    push @$test, "replace attribute: $_ => $replace->{$_}";
+                }
 
-            my $result = $this->{ldap}->modify( $dn, replace => {%$replace} );
+                push @$test, "Attributes to add:";
+                foreach ( keys %{$add} ) {
+                    if ( ref $add->{$_} eq "ARRAY" ) {
+                        foreach my $addelem ( @{ $add->{$_} } ) {
+                            push @$test, "add attribute: $_ => $addelem";
+                        }
+                    }
+                    else {
+                        push @$test, "add attribute: $_ => $add->{$_}";
+                    }
+                }
 
-            if ( $result->is_error() ) {
-                my $errorMessage = $result->error();
-                $this->{errors}->addError( 'ERROR_ON_MODIFY',
-                    [ 'ldapModifyReplace: Error on add:', $errorMessage ] );
+                push @$test, "Attributes to delete:";
+
+                foreach ( keys %{$delete} ) {
+                    if ( ref $delete->{delete}->{$_} eq "ARRAY" ) {
+                        Foswiki::Func::writeDebug("ARRAY");
+                        foreach my $elem ( @{ $delete->{$_} } ) {
+                            push @$test, "delete attribute: $_ => $elem";
+                        }
+                    }
+                    else {
+                        Foswiki::Func::writeDebug("SCALAR");
+                        push @$test, "delete attribute: $_ => " . $delete->{$_};
+                    }
+                }
+
+                push @$test, "Attributes to delete completely:";
+                foreach ( @{$delattr} ) {
+                    push @$test, "delete attribute: $_";
+                }
+
+                $this->{errors}->addError( '___TEST___', $test );
+
             }
+            else {
 
+                my $result = $this->{ldap}->modify(
+                    $dn,
+                    add     => {%$add},
+                    delete  => {%$delete},
+                    replace => {%$replace}
+                );
+                if ( $result->is_error() ) {
+                    my $errorMessage = $result->error();
+                    $this->{errors}->addError( 'ERROR_ON_MODIFY',
+                        [ 'ldapModify: Error on modify:', $errorMessage ] );
+                }
+                if ( scalar @{$delattr} ) {
+                    $result =
+                      $this->{ldap}->modify( $dn, delete => [@$delete] );
+                    if ( $result->is_error() ) {
+                        my $errorMessage = $result->error();
+                        $this->{errors}->addError(
+                            'ERROR_ON_MODIFY',
+                            [
+                                'ldapModify: Error on delete attribute:',
+                                $errorMessage
+                            ]
+                        );
+                    }
+                }
+
+            }
         }
         else {
             $this->{errors}->addError( 'UNKNOWN_ERROR_ON_CONNECT',
@@ -445,83 +545,111 @@ sub ldapModifyReplace {
     return 1;
 }
 
-=pod
-
----++ ObjectMethod getModifyReplaceHash ( $Net::Ldap::Entry, \%data ) -> \%replaceHash
-
-Takes the entry and compares the data in $data to build a replace hash ready to throw into LdapModifyReplace as an argument.
-
-=cut
-
-sub getModifyReplaceHash {
+sub getModifyHash {
     my $this    = shift;
     my $entry   = shift;
     my $data    = shift;
-    my $modHash = {};
+    my $opts    = shift;
+    my $modHash = { add => {}, delete => {}, delattr => [], replace => {} };
     return 0 unless ( defined $entry );
     unless ( defined $data ) {
         $data = $this->{attributes};
     }
-    foreach my $key (%$data) {
-        my $formDataSize = 1;
 
-        #Foswiki::Func::writeDebug("K: $key");
-        #Foswiki::Func::writeDebug("SIZE: $formDataSize");
+    foreach my $key ( keys %$data ) {
+        my $size = 0;
+        if ( defined $data->{$key} ) {
+            $size = scalar @{ $data->{$key} };
+        }
+
+        #add
+        if ( exists $opts->{add}->{ lc $key } ) {
+            if ( $size > 1 ) {
+                foreach ( @{ $data->{$key} } ) {
+                    push @{ $modHash->{add}->{$key} }, $_;
+                }
+            }
+            elsif ( $size == 1 ) {
+                $modHash->{add}->{$key} = $data->{$key}->[0];
+            }
+            else {
+            }
+            next;
+        }
         if ( $entry->exists($key) ) {
             my @entryValues = $entry->get_value($key);
 
-            #we have an attribute for the formkey
+            #delete
+            if ( exists $opts->{del}->{ lc $key } ) {
+                if ( $size > 1 ) {
+                    foreach ( @{ $data->{$key} } ) {
+                        foreach my $entryVal (@entryValues) {
+                            if ( $entryVal eq $_ ) {
+                                push @{ $modHash->{delete}->{$key} }, $_;
+                            }
+                        }
+                    }
+                }
+                elsif ( $size == 0 ) {
+                    push @{ $modHash->{delattr} }, $key;
+                }
+                elsif ( $size == 1 ) {
+                    if ( not $data->{$key}->[0] ) {
+                        push @{ $modHash->{delattr} }, $key;
+                    }
+                    else {
+                        foreach my $entryVal (@entryValues) {
+                            if ( $entryVal eq $data->{$key}->[0] ) {
+                                $modHash->{delete}->{$key} = $data->{$key}->[0];
+                            }
+                        }
+
+                    }
+                }
+                next;
+            }
+
+            #replace
             if (@entryValues) {
-
-                #entry has already values for key. check if we have some too
                 if ( @{ $data->{$key} } ) {
-
-                    #check if we just need a string
                     if ( ( @{ $data->{$key} } == 1 ) && ( @entryValues == 1 ) )
                     {
-
-                     #now we just need a string, check if something will changes
                         if ( $data->{$key}->[0] eq $entryValues[0] ) {
 
                             #nothing to do here
                         }
                         else {
-
                             #change
-                            $modHash->{$key} = $data->{$key}->[0];
+                            $modHash->{replace}->{$key} = $data->{$key}->[0];
                         }
                     }
                     else {
-
-                   #here we need an array ref. ATTENTION: Empty Array = deleting
-                        $modHash->{$key} = $data->{$key};
+                        $modHash->{replace}->{$key} = $data->{$key};
                     }
                 }
                 else {
-
                     #we dont have values to modify
                 }
             }
             else {
-
-                #entry has no values yet, but the attribute is existing
                 if ( @{ $data->{$key} } == 1 ) {
-                    $modHash->{$key} = $data->{$key}->[0];
+                    $modHash->{replace}->{$key} = $data->{$key}->[0];
                 }
                 else {
-                    $modHash->{$key} = $data->{$key};
+                    $modHash->{replace}->{$key} = $data->{$key};
                 }
             }
         }
         else {
-
-           #fail -> for Form key attr. there is not value in original LDAP entry
+            $this->{errors}->addError(
+                'ATTRIBUTE_NOT_FOUND',
+                [
+"There is no such attribute in the original LDAP entry: $key"
+                ]
+            );
         }
-
     }
-
     return $modHash;
-
 }
 
 =pod
@@ -755,7 +883,8 @@ sub isUniqueLdapAttribute {
     my $this          = shift;
     my $attributeName = shift;
     my $value         = shift;
-    Foswiki::Func::writeDebug($attributeName);
+
+    #Foswiki::Func::writeDebug($attributeName);
     unless ( defined $attributeName and defined $value ) {
         return 0;
     }
@@ -788,24 +917,35 @@ sub isUniqueLdapAttribute {
 
 =pod
 
----++ ObjectMethod getLastUidnumberFromLDAP ( $attributeName ) -> $number
+---++ ObjectMethod getLastNumberFromLDAP ( $attributeName, $minimum, $maximum ) -> $number
 
-gets the biggest positive value of the numerical attribute.
+gets the biggest positive value of the numerical attribute between a range for all userbase DN.
 do not call this on attributes which:
    * are not numerical
    * can be negative
 
 =cut
 
-sub getLastUidnumberFromLDAP {
+sub getLastNumberFromLDAP {
     my $this          = shift;
     my $attributeName = shift;
+    my $min           = shift;
+    my $max           = shift;
     my $userBase      = $this->{userBase} if defined( $this->{userBase} );
     unless ( scalar @$userBase && $attributeName ) {
         $this->{errors}->addError(
             'MISSING_PARAMETERS',
             [
 'getLastUidnumberFromLDAP: Please call this function with an attribute name and make sure the object is initialized correctly'
+            ]
+        );
+        return -1;
+    }
+    if ( $min > $max ) {
+        $this->{errors}->addError(
+            'MIN_BIGGER_MAX',
+            [
+'getLastUidnumberFromLDAP: The minimum for a value is bigger than the maximum.'
             ]
         );
         return -1;
@@ -834,11 +974,13 @@ sub getLastUidnumberFromLDAP {
             return undef;
         }
         my @list = $result->entries();
-        $ret =
-          ( $_->get_value($attributeName) > $ret )
-          ? $_->get_value($attributeName)
-          : $ret
-          foreach (@list);
+        foreach my $entry (@list) {
+            my $value = $entry->get_value($attributeName);
+            $ret =
+              ( ( $value <= $max ) && ( $value >= $min ) && ( $value > $ret ) )
+              ? $value
+              : $ret;
+        }
     }
     return $ret if $ret > 0;
     return -1;
@@ -916,9 +1058,9 @@ sub getUserDN {
     my $value              = shift;
     my $userBase           = $this->{userBase} if defined( $this->{userBase} );
 
-    Foswiki::Func::writeDebug($loginAttributeName);
-    Foswiki::Func::writeDebug($value);
-    Foswiki::Func::writeDebug($_) foreach (@$userBase);
+    #Foswiki::Func::writeDebug($loginAttributeName);
+    #Foswiki::Func::writeDebug($value);
+    #Foswiki::Func::writeDebug($_) foreach (@$userBase);
     unless ( scalar @$userBase && $loginAttributeName && $value ) {
         $this->{errors}->addError( 'MISSING_PARAMETERS',
             ['getUserDN: parameters are missing or userbase not set'] );

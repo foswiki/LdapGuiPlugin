@@ -37,6 +37,10 @@ sub new {
     my $class = shift;
     my $this  = {
         hashAlgorithms => {
+            'id' => sub {
+                my $text = shift;
+                return $text;
+            },
             'sha' => sub {
                 my $text = shift;
                 my $sha  = Digest::SHA->new;
@@ -119,9 +123,8 @@ sub addAlgorithm {
         #$this->{error}->addError('',[]);
         return 0;
     }
-    foreach ( keys $this->{hashAlgorithms} ) {
-        return 0 if ( lc $name eq $_ );
-    }
+
+    return 0 if ( exists $this->{hashAlgorithms}->{ lc $name } );
 
     $this->{hashAlgorithms}->{ lc $name } = $algorithm;
     return 1;

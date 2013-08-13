@@ -3,10 +3,8 @@ package Foswiki::Plugins::LdapGuiPlugin;
 use strict;
 use warnings;
 
-use Net::LDAP qw(LDAP_REFERRAL);
-use Net::LDAP::Extension::SetPassword;
-use Net::LDAP::Entry;
-use Net::LDAP::LDIF;
+use URI::Escape;
+use CGI;
 use Foswiki::Plugins::LdapGuiPlugin::RequestData;
 use Foswiki::Plugins::LdapGuiPlugin::LdapUtil;
 use Foswiki::Plugins::LdapGuiPlugin::Error;
@@ -17,38 +15,60 @@ our $SHORTDESCRIPTION  = 'Plugin interface for LDAP GUI over Foswiki';
 our $NO_PREFS_IN_TOPIC = 1;
 our $pluginName        = 'LdapGuiPlugin';
 
+=pod
+
+=cut
+
 sub initPlugin {
     my ( $topic, $web, $user, $installWeb ) = @_;
     Foswiki::Func::registerRESTHandler( 'modifyData', \&_modifyData );
     Foswiki::Func::registerRESTHandler( 'addData',    \&_addData );
 
-    Foswiki::Func::registerTagHandler( 'JSONREGEXP',  \&_jsonRegexp );
-    Foswiki::Func::registerTagHandler( 'CREATELOGIN', \&_createLogin );
+    Foswiki::Func::registerTagHandler( 'JSONREGEXP', \&_jsonRegexp );
     Foswiki::Func::registerTagHandler( 'LDAPGETATTRIBUTE',
         \&_ldapGetAttribute );
+    Foswiki::Func::registerTagHandler( 'LDAPGUITESTMODE', \&_ldapGuiTestMode );
 
-#Foswiki::Func::writeDebug($Foswiki::cfg{Plugins}{LdapGuiPlugin}{MemberAttribute});
-#Foswiki::Func::writeDebug($Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiUidCount});
-    my $workArea = Foswiki::Func::getWorkArea($pluginName);
-    my $fileName = $workArea . '/uidCounter.txt';
-    my $uidfh;
-    if ( not open( $uidfh, "<", $fileName ) ) {
-        open( $uidfh, ">", $fileName );
-
-#Foswiki::Func::writeDebug($Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiUidCount});
-        if ( $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiUidCount} >= 0 ) {
-            print $uidfh $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiUidCount};
-            print $uidfh "\n";
+    if ( $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiAutosetUidNumber} ) {
+        my $toSet = $Foswiki::cfg{Plugins}{LdapGuiPlugin}
+          {LdapGuiAutosetNumericalAttributes};
+        my $workArea = Foswiki::Func::getWorkArea($pluginName);
+        foreach ( keys %{$toSet} ) {
+            my $fileName = $workArea . '/' . $_ . '.txt';
+            $fileName =~ /(.*)/;
+            $fileName = $1;
+            my $fh;
+            my $min = $toSet->{$_}->{min};
+            my $max = $toSet->{$_}->{max};
+            unless ( ( $min =~ m/^\d+$/ ) && ( $max =~ m/^\d+$/ ) ) {
+                die
+                  "minimum or maximum for number attribute $_ is not a number";
+            }
+            if ( not open( $fh, "<", $fileName ) ) {
+                if ( open( $fh, ">", $fileName ) ) {
+                    if ( $min > 0 and $max > 0 ) {
+                        if ( $max <= $min ) {
+                            warn
+"maximum smaller or equal minimum for number attribute $_";
+                            print $fh $max;
+                        }
+                        print $fh $min;
+                        print $fh "\n";
+                    }
+                    else {
+                        #fail
+                        die "minimum or maximum negative";
+                    }
+                    close $fh;
+                }
+                else {
+                    die "can not create file";
+                }
+            }
+            else {
+                close $fh;
+            }
         }
-        else {
-
-            #fail
-            die;
-        }
-        close $uidfh;
-    }
-    else {
-        close $uidfh;
     }
 
     return 1;
@@ -70,13 +90,19 @@ sub _modifyData {
     my $web   = $session->{webName};
     my $topic = $session->{topicName};
 
+    my $error = Foswiki::Plugins::LdapGuiPlugin::Error->new();
+
+    unless ( _isTrustedWeb( $web, $error ) ) {
+        return $error->errorRenderHTML( $web, $topic );
+    }
+
     #foreach my $n ( keys $query->{param} ) {
     #    foreach ( @{ $query->{param}->{$n} } ) {
     #        Foswiki::Func::writeDebug("$n :      $_ ");
     #    }
     #}
 
-    Foswiki::Func::writeDebug( "GCUID: " . Foswiki::Func::getCanonicalUserID );
+    #Foswiki::Func::writeDebug( "GCUID: " . Foswiki::Func::getCanonicalUserID );
 
     my $loginSchema = $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiLoginSchema};
     my $formLoginName = $loginSchema->{add}->{loginName};
@@ -84,13 +110,12 @@ sub _modifyData {
     my $loginAttributeName =
       $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiLoginAttribute};
 
-    my $error = Foswiki::Plugins::LdapGuiPlugin::Error->new();
     my $option = Foswiki::Plugins::LdapGuiPlugin::Option->new( $query, $error );
 
     my $ldapUtil = Foswiki::Plugins::LdapGuiPlugin::LdapUtil->new($error);
     if ( $ldapUtil->hasError() || $error->hasError() ) {
         $error->writeErrorsToDebug();
-        return "FAIL AT LDAPUTIL\n\n";
+        return $error->errorRenderHTML( $web, $topic );
     }
 
     my $requestData =
@@ -100,10 +125,10 @@ sub _modifyData {
       ;    #name clashes with FormPlugin
     if ( $requestData->hasError() || $error->hasError() ) {
         $error->writeErrorsToDebug();
-        return "FAIL AT REQUESTDATA\n\n";
+        return $error->errorRenderHTML( $web, $topic );
     }
 
-    my $password  = $requestData->getOtherByName($formLoginPW);
+    my $password  = ${ $requestData->getOtherByName($formLoginPW) }[0];
     my $loginAttr = $requestData->getAttributeByName($loginAttributeName);
 
     my $userBase = $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiUserBase};
@@ -115,7 +140,8 @@ sub _modifyData {
     };
     $error->writeErrorsToDebug();
     my $result = $ldapUtil->ldapSearch($args);
-    Foswiki::Func::writeDebug( "SC:  " . $result->count() );
+
+    #		Foswiki::Func::writeDebug( "SC:  " . $result->count() );
     my $entry;
 
     if ( $result->count() == 1 ) {
@@ -132,13 +158,7 @@ sub _modifyData {
 
     unless ( defined $entry ) {
         $error->writeErrorsToDebug();
-        my $url = Foswiki::Func::getScriptUrl(
-            $web, $topic, 'oops',
-            template => "oopssaveerr",
-            param1   => "Sorry $user but I failed before modify"
-        );
-        Foswiki::Func::redirectCgiQuery( undef, $url );
-        return 0;
+        return $error->errorRenderHTML( $web, $topic );
     }
 
     $error->writeErrorsToDebug();
@@ -146,40 +166,35 @@ sub _modifyData {
     $error->writeErrorsToDebug();
 
     my $modifyHash =
-      $ldapUtil->getModifyReplaceHash( $entry, $requestData->getAttributes() );
+      $ldapUtil->getModifyHash( $entry, $requestData->getAttributes(),
+        $option->getModifyOptions );
     $error->writeErrorsToDebug();
-    Foswiki::Func::writeDebug( "$_  :" . $modifyHash->{$_} )
-      foreach ( keys %$modifyHash );
+
+#Foswiki::Func::writeDebug( "$_  :" . $modifyHash->{$_} ) foreach ( keys %$modifyHash );
 
     if ( $error->hasError ) {
         $error->writeErrorsToDebug();
-        my $url = Foswiki::Func::getScriptUrl(
-            $web, $topic, 'oops',
-            template => "oopssaveerr",
-            param1   => "Sorry $user but I failed before modify"
-        );
-        Foswiki::Func::redirectCgiQuery( undef, $url );
-        return 0;
+        return $error->errorRenderHTML( $web, $topic );
     }
     if (
-        $ldapUtil->ldapModifyReplace(
+        $ldapUtil->ldapModify(
             $entry->dn(), $password, $entry->dn(), $modifyHash
         )
       )
     {
-        Foswiki::Func::writeDebug("IT WORKED");
+
+        #Foswiki::Func::writeDebug("IT WORKED");
     }
     else {
         $error->writeErrorsToDebug();
-        my $url = Foswiki::Func::getScriptUrl(
-            $web, $topic, 'oops',
-            template => "oopssaveerr",
-            param1   => "Sorry $user but I failed on modify"
-        );
-        Foswiki::Func::redirectCgiQuery( undef, $url );
-        return 0;
+        return $error->errorRenderHTML( $web, $topic );
     }
-
+    if (   $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiTestMode}
+        or $error->hasError )
+    {
+        $error->writeErrorsToDebug();
+        return $error->errorRenderHTML( $web, $topic );
+    }
     my $url = Foswiki::Func::getScriptUrl(
         $web, $topic, 'oops',
         template => "oopssaveerr",
@@ -210,15 +225,17 @@ sub _moveEntry {
 _addData
 REST call to add data to the LDAP server
 
-TODO: Test this proper this is just an experimental version
+
+TODO: If we can add Users, we should add users to groups too, see if LDAPmodify could so this
+TODO: Generalize, so that the handler actually just has to call a more abstract subroutine
 
 =cut
 
 sub _addData {
     my ( $session, $subject, $verb, $response ) = @_;
     my $query = $session->{request};
-    my $web   = $query->{param}->{web}[0];
-    my $topic = $query->{param}->{topic}[0];
+    my $web   = $session->{webName};
+    my $topic = $session->{topicName};
 
     #debug $query output
     #foreach my $n ( keys $query->{param} ) {
@@ -227,93 +244,164 @@ sub _addData {
     #    }
     #}
     my $error = Foswiki::Plugins::LdapGuiPlugin::Error->new();
+
+    unless ( _isTrustedWeb( $web, $error ) ) {
+        return $error->errorRenderHTML( $web, $topic );
+    }
+
     my $option = Foswiki::Plugins::LdapGuiPlugin::Option->new( $query, $error );
 
     if ( $option->hasError() || $error->hasError() ) {
         $error->writeErrorsToDebug();
-        my $page = $error->errorRenderHTML( $web, $topic );
-        return $page;
+        return $error->errorRenderHTML( $web, $topic );
     }
 
     my $ldapUtil = Foswiki::Plugins::LdapGuiPlugin::LdapUtil->new($error);
     if ( $ldapUtil->hasError() || $error->hasError() ) {
         $error->writeErrorsToDebug();
-        my $page = $error->errorRenderHTML( $web, $topic );
-        return $page;
+        return $error->errorRenderHTML( $web, $topic );
+    }
+
+    #autogenerade number attributes
+
+    if ( $Foswiki::cfg{Plugins}{LdapGuiPlugin}
+        {LdapGuiAllowAutosetNumericalAttributes} )
+    {
+        my $toSet = $Foswiki::cfg{Plugins}{LdapGuiPlugin}
+          {LdapGuiAutosetNumericalAttributes};
+        my $workArea = Foswiki::Func::getWorkArea($pluginName);
+        use Fcntl qw(:DEFAULT :flock);
+        foreach ( keys %{$toSet} ) {
+            my $fileName = $workArea . '/' . $_ . '.txt';
+            my $number   = -1;
+            my $fh;
+            my $min  = $toSet->{$_}->{min};
+            my $max  = $toSet->{$_}->{max};
+            my $step = 1;
+            if ( defined $toSet->{$_}->{step} ) {
+                if ( $toSet->{$_}->{step} =~ m/^\d+$/ ) {
+                    $step = $toSet->{$_}->{step};
+                }
+            }
+
+            unless ( ( $min =~ m/^\d+$/ ) && ( $max =~ m/^\d+$/ ) ) {
+                $error->addError(
+                    'NO_NUMBER',
+                    [
+"minimum or maximum for number attribute $_ is not a number!"
+                    ]
+                );
+                next;
+            }
+            if ( $min >= $max ) {
+                my $tmp = $max;
+                $max = $min;
+                $min = $max;
+            }
+            if ( open( $fh, "+<", $fileName ) ) {
+                flock( $fh, LOCK_EX ) or die "can't lock: $!";
+                $number = <$fh>;
+                $number =~ s/\n//;
+                Foswiki::Func::writeDebug("We have a number for $_ : $number");
+                my $newValue = int($number) + $step;
+                if ( $number > 0 ) {
+                    if ( $ldapUtil->isUniqueLdapAttribute( $_, $number ) ) {
+
+                        #number is unique
+                        #Foswiki::Func::writeDebug("$_ : $number ist unique");
+                        if ( $number > $max ) {
+                            $error->addError(
+                                'MAXIMUM_EXCEEDED',
+                                [
+                                    "for: $_",
+                                    "The maximum of $max was exceeded.",
+                                    'Please set a new range in configure.'
+                                ]
+                            );
+                            close $fh or die "Error on closing $fh\n";
+                            next;
+                        }
+                        unless ( $ldapUtil->hasError() || $error->hasError() ) {
+                            Foswiki::Func::writeDebug(
+"GET $_ OUT_OF_FILE: $fileName   NEWVAL: $newValue"
+                            );
+                            $query->{param}->{$_} = [$number];
+                            seek( $fh, 0, 0 );
+                            print $fh "$newValue";
+                            print $fh "\n";
+                        }
+                    }
+                    else {
+                        #not unique -> search it
+                        Foswiki::Func::writeDebug(
+                            "$_ : $number ist nicht unique");
+                        $number =
+                          $ldapUtil->getLastNumberFromLDAP( $_, $min, $max );
+                        Foswiki::Func::writeDebug(
+                            "$_ : min: $min, max: $max   last number: $number");
+                        unless ( $ldapUtil->hasError() || $error->hasError() ) {
+                            if ( $number < 0 ) {
+                                $error->addError(
+                                    'NEGATIVE_AUTOGENERATED_NUMBER',
+                                    [
+                                        "for: $_",
+'No negative value should be found, something went wrong'
+                                    ]
+                                );
+                            }
+                            else {
+                                $number = $number + 1;    #maybe + step
+                                if ( $number > $max ) {
+                                    $error->addError(
+                                        'MAXIMUM_EXCEEDED',
+                                        [
+                                            "for: $_",
+                                            "The maximum of $max was exceeded.",
+'Please set a new range in configure.'
+                                        ]
+                                    );
+                                    close $fh or die "Error on closing $fh\n";
+                                    next;
+                                }
+                                $query->{param}->{$_} = [$number];
+                                $newValue = int($number) + $step;
+                                seek( $fh, 0, 0 );
+                                print $fh "$newValue";
+                                print $fh "\n";
+                            }
+                        }
+                    }
+                }
+                else {
+                    $error->addError(
+                        'NEGATIVE_AUTOGENERATED_NUMBER',
+                        [
+                            "for: $_",
+'No negative value should be found, something went wrong'
+                        ]
+                    );
+                }
+                close $fh or die "Error on closing $fh\n";
+            }
+            else {
+                die "Can not open <+ file $!";
+            }
+        }
+    }
+
+    if ( $ldapUtil->hasError() || $error->hasError() ) {
+        $error->writeErrorsToDebug();
+        return $error->errorRenderHTML( $web, $topic );
     }
 
     my $requestData =
       Foswiki::Plugins::LdapGuiPlugin::RequestData->new( $query, $option,
         $ldapUtil->getSchema, $error,
         [ 'name', $Foswiki::cfg{Plugins}{LdapGuiPlugin}{MemberAttribute} ] )
-      ; #TODO: dont add 'name' automatically, this is for form plugin compatibility
+      ;    #name clashes with FormPlugin form name
     if ( $requestData->hasError() || $error->hasError() ) {
         $error->writeErrorsToDebug();
-        my $page = $error->errorRenderHTML( $web, $topic );
-        return $page;
-    }
-
-    #autogenerate NumberAttributes (test specific uidNumber)
-    my $uidNumber;
-    if ( $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiAutosetUidNumber} ) {
-        $uidNumber = $requestData->getAttributeByName('uidNumber')->[0]
-          if $requestData->hasAttribute('uidNumber');
-        if ( defined $uidNumber ) {
-            if ( $ldapUtil->isUniqueLdapAttribute( 'uidNumber', $uidNumber ) ) {
-                if ( $ldapUtil->hasError() || $error->hasError() ) {
-                    $error->writeErrorsToDebug();
-
-                    #return '1';
-                    my $page = $error->errorRenderHTML( $web, $topic );
-                    return $page;
-                }
-            }
-            else {
-                $uidNumber = undef;
-            }
-        }
-        unless ( defined $uidNumber ) {
-            my $uidNumber = _getLastUidnumberFromFile();
-            if ( $uidNumber > 0 ) {
-                if ( 0
-                    && $ldapUtil->isUniqueLdapAttribute( 'uidNumber',
-                        $uidNumber ) )
-                {
-                    if ( $ldapUtil->hasError() || $error->hasError() ) {
-                        $error->writeErrorsToDebug();
-
-                        #return '2';
-                        my $page = $error->errorRenderHTML( $web, $topic );
-                        return $page;
-                    }
-                    else {
-                        $requestData->addAttribute( 'uidNumber', [$uidNumber] );
-                    }
-                }
-                else {
-                    $uidNumber =
-                      $ldapUtil->getLastUidnumberFromLDAP('uidNumber');
-                    if ( $ldapUtil->hasError() || $error->hasError() ) {
-                        $error->writeErrorsToDebug();
-
-                        #return '3';
-                        my $page = $error->errorRenderHTML( $web, $topic );
-                        return $page;
-                    }
-                    if ( $uidNumber < 0 ) {
-                        return "too small -> fail!";
-                    }
-                    else {
-                        $requestData->addAttribute( 'uidNumber',
-                            [ $uidNumber + 1 ] );
-                        unless ( _updateLastUidNumber( $uidNumber + 2 ) ) {
-                            my $page = $error->errorRenderHTML( $web, $topic );
-                            return $page;
-                        }
-                    }
-                }
-            }
-        }
+        return $error->errorRenderHTML( $web, $topic );
     }
 
     #create entry
@@ -342,36 +430,27 @@ sub _addData {
             }
             else {
                 $error->writeErrorsToDebug();
-
-                #return '4';
-                my $page = $error->errorRenderHTML( $web, $topic );
-                return $page;
+                return $error->errorRenderHTML( $web, $topic );
             }
-            Foswiki::Func::writeDebug(
-                "LOGINATTRNAME + USERBASE DN:   $subTree");
+
+            #Foswiki::Func::writeDebug(
+            #    "LOGINATTRNAME + USERBASE DN:   $subTree");
 
             if ( defined $subTree and $subTree ) {
 
                 $objectClasses = $requestData->getObjectClasses();
                 unless ( defined $objectClasses ) {
                     $error->writeErrorsToDebug();
-                    my $page = $error->errorRenderHTML( $web, $topic );
-                    return $page;
+                    return $error->errorRenderHTML( $web, $topic );
                 }
             }
         }
         else {
-
-            #return '5';
-            my $page = $error->errorRenderHTML( $web, $topic );
-            return $page;
+            return $error->errorRenderHTML( $web, $topic );
         }
     }
     else {
-
-        #return '6';
-        my $page = $error->errorRenderHTML( $web, $topic );
-        return $page;
+        return $error->errorRenderHTML( $web, $topic );
     }
     my $entry = _createNewEntry( $attributes, $subTree, $objectClasses );
 
@@ -379,21 +458,18 @@ sub _addData {
 
     unless ( _isValidEntry( $ldapUtil->getSchema(), $objectClasses, $entry ) ) {
         $error->writeErrorsToDebug();
-
-        #return '7';
-        my $page = $error->errorRenderHTML( $web, $topic );
-        return $page;
+        return $error->errorRenderHTML( $web, $topic );
     }
 
-    #    _writeLDIF($entry);    #just for debugging
+    _writeLDIF($entry);    #just for debugging
 
     #get user
     my $loginSchema = $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiLoginSchema};
     my $formLoginName = $loginSchema->{add}->{loginName};
     my $formLoginPW   = $loginSchema->{add}->{loginPWD};
 
-    my $user     = $requestData->getOtherByName($formLoginName);
-    my $password = $requestData->getOtherByName($formLoginPW);
+    my $user     = ${ $requestData->getOtherByName($formLoginName) }[0];
+    my $password = ${ $requestData->getOtherByName($formLoginPW) }[0];
 
     my $bindDNs = $ldapUtil->getUserDN( $loginAttributeName, $user );
     $error->writeErrorsToDebug();
@@ -413,85 +489,35 @@ sub _addData {
                     'Check the correct spelling of your LDAP login name.'
                 ]
             );
-
-            #return '8';
-            my $page = $error->errorRenderHTML( $web, $topic );
-            return $page;
+            return $error->errorRenderHTML( $web, $topic );
         }
         else {
             if ( scalar @$bindDNs > 1 ) {
-
-                #return '9';
-                my $page = $error->errorRenderHTML( $web, $topic );
-                return $page;
+                return $error->errorRenderHTML( $web, $topic );
             }
             else {
                 $bindDN = @{$bindDNs}[0];
             }
         }
-
         unless ( $bindDN && $password && $entry ) {
-
-            #return '10';
-            my $page = $error->errorRenderHTML( $web, $topic );
-            return $page;
+            return $error->errorRenderHTML( $web, $topic );
         }
+    }
+
+    if ( $error->hasError ) {
+        $error->writeErrorsToDebug();
+        return $error->errorRenderHTML( $web, $topic );
     }
 
     if ( $ldapUtil->ldapAdd( $bindDN, $password, $entry ) ) {
         if ( $error->hasError ) {
             $error->writeErrorsToDebug();
-            my $page = $error->errorRenderHTML( $web, $topic );
-            return $page;
+            return $error->errorRenderHTML( $web, $topic );
         }
-
     }
     else {
         $error->writeErrorsToDebug();
-        my $page = $error->errorRenderHTML( $web, $topic );
-        return $page;
-    }
-
-    #groups to add the user to? this is the options 'hardcoded' part
-
-    if ( $option->hasGroupsToAdd() ) {
-        my $groupDN = $option->getGroupDN();
-        Foswiki::Func::writeDebug("GROUPS TO ADD: $_") foreach (@$groupDN);
-        if ( scalar @$groupDN ) {
-            my $grMemberAttrName =
-              $Foswiki::cfg{Plugins}{LdapGuiPlugin}{MemberAttribute};
-            my $member = $entry->get_value($loginAttributeName);
-            if ( $grMemberAttrName && $member ) {
-                my $addHash = { $grMemberAttrName => $member };
-
-                if ( $Foswiki::{cfg}{Plugins}{LdapGuiPlugin}
-                    {LdapGuiAllowProxyUser} )
-                {    #should be another proxy user
-                    $bindDN =
-                      $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiBindDN};
-                    $password =
-                      $Foswiki::cfg{Plugins}{LdapGuiPlugin}
-                      {LdapGuiBindPassword};
-                }
-
-                unless (
-                    $ldapUtil->ldapAddToGroup(
-                        $bindDN, $password, $groupDN, $addHash
-                    )
-                  )
-                {
-                    my $page = $error->errorRenderHTML( $web, $topic );
-                    return $page;
-                }
-            }
-            else {
-                my $page = $error->errorRenderHTML( $web, $topic );
-                return $page;
-            }
-        }
-        else {
-
-        }
+        return $error->errorRenderHTML( $web, $topic );
     }
 
     #membergroups out of the request
@@ -500,14 +526,18 @@ sub _addData {
         my $groups =
           $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiGroupIDIdentifier};
         my $memberGroups = $requestData->getMemberGroups();
-        Foswiki::Func::writeDebug("$_") foreach (@$memberGroups);
+
+        #Foswiki::Func::writeDebug("$_") foreach (@$memberGroups);
         my $groupDN = [];
         foreach my $chosen (@$memberGroups) {
             if ( exists $groups->{$chosen} and defined $groups->{$chosen} ) {
+
+                #Foswiki::Func::writeDebug("YESDN: $groups->{$chosen}");
                 push @$groupDN, $groups->{$chosen};
             }
             else {
-                Foswiki::Func::writeDebug();
+
+                #Foswiki::Func::writeDebug();
             }
         }
         if ( scalar @$groupDN ) {
@@ -533,13 +563,11 @@ sub _addData {
                     )
                   )
                 {
-                    my $page = $error->errorRenderHTML( $web, $topic );
-                    return $page;
+                    return $error->errorRenderHTML( $web, $topic );
                 }
             }
             else {
-                my $page = $error->errorRenderHTML( $web, $topic );
-                return $page;
+                return $error->errorRenderHTML( $web, $topic );
             }
         }
         else {
@@ -551,55 +579,144 @@ sub _addData {
 
         #Foswiki::Func::writeDebug("NO GROUPS TO ADD USER");
     }
-    $error->writeErrorsToDebug();
+    $error->writeErrorsToDebug();    #should tell: NO ERROR
+                                     #add group
 
-#	if ( $Foswiki::cfg{Plugins}{LdapGuiPlugin}{AllowLdapTriggers} ) {
-#		if ( $option->hasTriggers ) {
-#			my $target = $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapTriggerTargetUrl} . $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapTriggerTargetPort};
-#			my $triggers = $Foswiki::cfg{Plugins}{LdapGuiPlugin}{Triggers};
-#			my $triggerUserIds = $Foswiki::cfg{Plugins}{LdapGuiPlugin}{TriggerIds};
-#			my $triggerName;
-#			if ( exists $triggers->{$option->getTrigger} and defined $triggers->{$option->getTrigger} ) {
-#				$triggerName = triggers->{$option->getTrigger};
-#
-#			}
-#			my $content = $requestData->getContent;
-#           $content = $content . '&' . "ldaptriggername=$triggerName";
-#			if ( _trigger ( $target, $content, $triggerName, $error ) ) {
-#	        } else {
-#				$error->writeErrorsToDebug();
-#	        	my $page = $error->errorRenderHTML($web,$topic);
-#	        	return $page;
-#	        }
-#		}
-#    }
-
-    #TODO: {cfg}Foswiki structure
     #TODO: write to a file in working/LdapGuiPlugin/uid.ltc as marker
     #TODO: build option for triggers
-    #	my $content = $requestData->getContent;
-    #    if ( defined $content ) {
-    #		if ( _trigger ( '', $content, 'dunno', $error ) ) {
-    #			return "success";
-    #        } else {
-    #			$error->writeErrorsToDebug();
-    #        	my $page = $error->errorRenderHTML($web,$topic);
-    #        	return $page;
-    #        }
-    #    }
-    #TODO replace it, this is no error :)
-    my $url = Foswiki::Func::getScriptUrl(
-        $web, $topic, 'oops',
-        template => "oopssaveerr",
-        param1   => 'User Added. :-)'
-    );
-    Foswiki::Func::redirectCgiQuery( undef, $url );
+    my $content   = $requestData->getContent;
+    my $uniqeName = $requestData->getAttributeByName($loginAttributeName)->[0];
+    _startTrigger( $content, $uniqeName, $error );
 
+    if (   $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiTestMode}
+        or $error->hasError )
+    {
+        $error->writeErrorsToDebug();
+        return $error->errorRenderHTML( $web, $topic );
+    }
+
+    #happy we are
+
+    return _renderSuccessAdd( $web, $topic, $entry );
+}
+
+sub _getLockFile {
+    my $fileName = shift;
+    my $content  = shift;
+    my $error    = shift;
+    use Fcntl qw(:DEFAULT :flock);
+    my $fh;
+
+    if ( open( $fh, ">", $fileName ) ) {
+        if ( flock( $fh, LOCK_EX ) ) {
+            print $fh $content;
+        }
+        else {
+
+            #Foswiki::Func::writeDebug("CANT LOCK $fileName");
+            return 0;
+        }
+    }
+    else {
+        $error->addError( 'COULD_NOT_CREATE_FILE', ["$fileName"] );
+        close $fh;
+        return 0;
+    }
+    close $fh;
     return 1;
 }
 
+sub _startTrigger {
+    my $content    = shift;
+    my $uniqueName = shift;
+    my $error      = shift;
+
+    my $workArea = Foswiki::Func::getWorkArea($pluginName);
+    my $fileName = $workArea . '/' . $uniqueName;
+
+    if ( $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiUseTrigger} ) {
+        my $targetURL =
+          $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiTriggerTargetURL};
+        my $tagretPort =
+          $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiTriggerTargetPort};
+
+        if ( defined $targetURL ) {
+            my $target = $targetURL . ':' . $tagretPort;
+            if ( defined $content ) {
+
+                if ( defined $workArea and defined $fileName ) {
+                    unless ( _getLockFile( $fileName, $content, $error ) ) {
+                        return 0;
+                    }
+
+                   #atomic file flag in workarea dude
+                   #Foswiki::Func::writeDebug( "Trigger File Name: $fileName" );
+
+                    if (
+                        _trigger(
+                            $target,                 $content,
+                            'placeHolderForTrigger', $error
+                        )
+                      )
+                    {
+                        return 1;
+                    }
+                    else {
+                        $error->addError( 'ERROR_WHILE_TRIGGER', [] );
+                    }
+                }
+            }
+            else {
+                $error->addError( 'NO_CONTENT_FOR_TRIGGER', [] );
+            }
+        }
+        else {
+            $error->addError( 'NO_TARGET_URL_FOR_TRIGGER', [] );
+        }
+    }
+    unless ( unlink $fileName ) {
+        $error->addError( 'COULD_NOT_DELETE', [ "$fileName", "$!" ] );
+    }
+
+    return 0;
+}
+
 =pod
-TODO use it later
+
+=cut
+
+sub _renderSuccessAdd {
+    my $web   = shift;
+    my $topic = shift;
+    my $entry = shift;
+    my $linkback =
+        $Foswiki::{cfg}{DefaultUrlHost}
+      . $Foswiki::{cfg}{ScriptUrlPaths}{view}
+      . "/$web.$topic";
+    my $insert = '<h2>Your Entry was successfully submitted</h2>';
+    $insert = $insert . "<h3>The following values were submitted: <br/><br/>";
+    $insert = $insert . 'dn: ' . uri_unescape( $entry->dn ) . '<br/>';
+    foreach my $attribute ( $entry->attributes ) {
+        my $values = $entry->get_value( $attribute, asref => 1 );
+        $attribute = uri_unescape($attribute);
+        if ( defined $values ) {
+            foreach my $value (@$values) {
+                $value  = uri_unescape($value);
+                $insert = $insert . "$attribute: $value<br/>";
+            }
+        }
+        else {
+            $insert = $insert . "$attribute: <br/>";
+        }
+    }
+    $insert = $insert . "<br/><br/><a href=\"$linkback\">Go back</a>";
+    my $page =
+      CGI::start_html( -title => 'Success' ) . $insert . CGI::end_html();
+    return $page;
+}
+
+=pod
+
 =cut
 
 sub _getLoginData {
@@ -619,12 +736,25 @@ sub _getLoginData {
 
 }
 
+sub _isTrustedWeb {
+    my $web   = shift;
+    my $error = shift;
+    foreach ( @{ $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiTrustedWebs} } ) {
+        unless ( lc $_ eq lc $web ) {
+            $error->addError( 'TRUSTED_WEB_ERROR',
+                [ "$web is not trusted.", 'Your request was denied.' ] );
+            return 0;
+        }
+    }
+    return 1;
+}
+
 =pod
 _isValidEntry
 
 look if the entry we created matches required attributes of its objectclasses
 
-TODO: Rewrite this function so that it uses LdapUtil
+TODO: Rewrite this function so that it only uses the LdapUtil object
 =cut
 
 sub _isValidEntry {
@@ -653,8 +783,13 @@ sub _isValidEntry {
         $may = _mergeArrays( $may, $tmpMay );
     }
 
+    #Foswiki::Func::writeDebug("OBC   $_") foreach (@$objectClasses);
     my %lookupMust = map { lc $_ => 1 } @$must;
-    my %lookupMay  = map { lc $_ => 1 } @$may;
+
+    #Foswiki::Func::writeDebug("MUST   $_") foreach (@$must);
+    my %lookupMay = map { lc $_ => 1 } @$may;
+
+    #Foswiki::Func::writeDebug("MAY   $_") foreach (@$may);
     my %lookupAttr = map { lc $_ => 1 } @attributes;
 
     #check if all must attributes are contained
@@ -677,6 +812,7 @@ sub _isValidEntry {
 
 =pod
 _mergeArrays (@1,@2) -> @(1++2)
+
 =cut
 
 sub _mergeArrays {
@@ -734,165 +870,12 @@ sub _writeLDIF {
     my $entry = shift;
 
     my $workArea = Foswiki::Func::getWorkArea($pluginName);
-    my $fileName = $workArea . '/testtest.ldif';
-
+    my $fileName = $workArea . '/' . $entry->dn . '.ldif';
+    $fileName =~ /(.)*/;
+    $fileName = $1;
     my $ldif = Net::LDAP::LDIF->new( $fileName, "w", onerror => 'undef' );
     $ldif->write_entry($entry);
     return $ldif;
-}
-
-=pod
-TODO: not yet used
-
-Check if the unique attributes are actually unique and a new entry is not a duplicate in one of the subtrees.
-
-=cut
-
-sub _entryHasDuplicateAttr {
-    my $entry = shift;
-    my $ldap  = shift;
-    die "_entryHasDuplicateAttr: No entry or ldap object given"
-      unless ( $entry && $ldap );
-    my $trees = $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiUserBase};
-    my $checkForDuplicates =
-      $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiNoDuplicateAttributes};
-    return 1 if not scalar @$checkForDuplicates;
-    return 1 if not scalar @$trees;
-    my $filter = '(|';
-
-    foreach (@$checkForDuplicates) {
-        $_ =~ s/^\s+//;
-        $_ =~ s/\s+$//;
-        $filter .= '(';
-        $filter .= "$_=" . $entry->get_value($_);
-        $filter .= ')';
-    }
-    $filter .= ')';
-
-    $ldap->bind();
-    foreach my $sb (@$trees) {
-        my $result = $ldap->search(
-            base   => $_,
-            filter => $filter
-        );
-        return 1 if $result->count;
-    }
-    return 0;
-}
-
-=pod
-LDAPerror ( $Net::Ldap::Message ) -> $string 
-
-=cut
-
-sub LDAPerror {
-    my $mesg = @_;
-    return
-        'RETURN_CODE: '
-      . $mesg->code
-      . ' MESSAGE: '
-      . $mesg->error_name . ' :'
-      . $mesg->error_text
-      . ' MESSAGE_ID: '
-      . $mesg->mesg_id . ' DN: '
-      . $mesg->dn;
-
-    #	---
-    # Programmer note:
-    #
-    #  "$mesg->error" DOESN'T work!!!
-    #
-    #print "\tMessage: ", $mesg->error;
-    #-----
-}
-
-=pod
-_isUniqueUidNumber ()
-=cut
-
-sub _isUniqueUidNumber {
-    my $ldap      = shift;
-    my $uidNumber = shift;
-    my $userBase  = $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiUserBase};
-    return 0 unless ( $ldap && scalar @$userBase && $uidNumber );
-    foreach (@$userBase) {
-        my $search = $ldap->search(
-            base   => $_,
-            scope  => 'sub',
-            filter => "uidNumber=$uidNumber",
-            attrs  => ['1.1']
-        );
-
-        #Foswiki::Func::writeDebug("COUNT: ".$search->count ( ));
-        return 0 if $search->count();
-    }
-    return 1;
-}
-
-#TODO: enhance this function to only find numbers in a specified range!
-sub _getLastUidnumberFromLDAP {
-    my $ldap     = shift;
-    my $userBase = $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiUserBase};
-    return -1 unless ( $ldap && scalar @$userBase );
-    my $ret = -1;
-    foreach (@$userBase) {
-        my $search = $ldap->search(
-            base   => $_,
-            scope  => 'sub',
-            filter => 'uidNumber=*',
-            attrs  => ['uidNumber']
-        );
-        my @list = $search->entries();
-        $ret =
-          ( $_->get_value('uidNumber') > $ret )
-          ? $_->get_value('uidNumber')
-          : $ret
-          foreach (@list);
-    }
-    return $ret if $ret > 0;
-    return -1;
-}
-
-=pod
-
-=cut
-
-sub _updateLastUidNumber {
-    my $newVal = shift;
-    return 0 if not defined $newVal;
-
-    my $workArea = Foswiki::Func::getWorkArea($pluginName);
-    my $fileName = $workArea . '/uidCounter.txt';
-    use Fcntl qw(:DEFAULT :flock);
-    my $fh;
-    open( $fh, ">", $fileName );
-    flock( $fh, LOCK_SH ) or die "can't lock: $!";
-    seek( $fh, 0, 0 );
-    print $fh ($newVal);
-    print $fh "\n";
-    close $fh;
-    return 1;
-}
-
-=pod
-
-=cut
-
-sub _getLastUidnumberFromFile {
-    my $workArea = Foswiki::Func::getWorkArea($pluginName);
-    my $fileName = $workArea . '/uidCounter.txt';
-    my $count    = -1;
-    use Fcntl qw(:DEFAULT :flock);
-    my $fh;
-    open( $fh, "+<", $fileName ) or return $count;
-    flock( $fh, LOCK_SH ) or die "can't lock: $!";
-    $count = <$fh>;
-    $count =~ s/\n//;
-    seek( $fh, 0, 0 );
-    print $fh ( $count + 1 );
-    print $fh "\n";
-    close $fh;
-    return $count;
 }
 
 =pod
@@ -915,6 +898,7 @@ sub _ldapGetAttribute {
     unless ( defined $userID or defined $params->{attribute} ) {
         return '';
     }
+    my $max = $params->{max} || 1;
 
     my $attrName = $params->{attribute};
 
@@ -922,7 +906,7 @@ sub _ldapGetAttribute {
     my $ldapUtil = Foswiki::Plugins::LdapGuiPlugin::LdapUtil->new($error);
     if ( $ldapUtil->hasError() || $error->hasError() ) {
         $error->writeErrorsToDebug();
-        return "FAIL AT LDAPUTIL\n\n";
+        return '';
     }
     my $userBase  = $ldapUtil->{userBase};
     my $loginAttr = $ldapUtil->{loginAttribute};
@@ -936,7 +920,21 @@ sub _ldapGetAttribute {
         if ( $search->count == 1 ) {
             my $entry = $search->pop_entry();
             if ( $entry->exists($attrName) ) {
-                return $entry->get_value($attrName);
+                my $values = $entry->get_value( $attrName, asref => 1 );
+                my $return = '';
+                if ( scalar @$values ) {
+                    my $tmp = 0;
+                    foreach (@$values) {
+                        last if ( $tmp == $max );
+                        $return = $return . $_ . ',';
+                        $tmp++;
+                    }
+                    $return =~ s/,$//;
+                    return $return;
+                }
+                else {
+
+                }
             }
         }
         elsif ( $search->count > 1 ) {
@@ -951,7 +949,7 @@ sub _ldapGetAttribute {
 =pod
 
 _jsonRegexp 
-...because escaping is unpleasant inside JSON strings
+just a helper function, will get removed
 
 =cut
 
@@ -966,6 +964,33 @@ sub _jsonRegexp {
 }
 
 =pod
+LDAP Trigger API
+The trigger API could provide a way to trigger events depending on a form action without apache being run as root.
+Therefore a stable well defined API is needed which is able to pass needed information to the instance which is triggering the external events.
+Example workflow:
+
+	     ----------------
+	    | Foswiki Form   |
+	     ----------------
+	            | RequestData
+	            | Options + {trigger option}
+	            | web/topic
+	     ----------------                                ----------
+	    |                |----{RequestData,Options}---->| LDAP     |
+	    | LdapGuiPlugin  |                              |          |
+	    |   ----------   |<---------Response------------|          |
+	     -- TriggerAPI --                                ----------
+	    | daemon IP      |
+	    | cfg{workflows} |
+	    | trigger option |
+	    | web/topic      |
+	     ----------------
+	            |{RequestData+scriptname+userid}             
+	            |
+	     ---------------
+	    |  HttpDaemon   |---{params}--->SCRIPT AS USERID
+	    |    (root)     |
+	     ---------------
 
 =cut
 
@@ -994,6 +1019,15 @@ sub _trigger {
         return 0;
     }
     return 1;
+}
+
+sub _ldapGuiTestMode {
+    my ( $session, $params, $theTopic, $theWeb ) = @_;
+    if ( $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiTestMode} ) {
+        return
+'LDAPGUIPLUGIN IS CURRENTLY IN TEST MODE - YOU CAN NOT CHANGE YOUR DATA';
+    }
+    return '';
 }
 
 1;
