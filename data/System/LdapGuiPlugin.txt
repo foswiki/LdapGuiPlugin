@@ -1,18 +1,17 @@
-%META:TOPICINFO{author="felberrobert" comment="reprev" date="1370524775" format="1.1" reprev="12" version="12"}%
+%META:TOPICINFO{author="felberrobert" comment="reprev" date="1377073686" format="1.1" reprev="17" version="17"}%
 ---+ !LdapGuiPlugin
 
 This plugin enables you to build a self defined LDAP GUI to ease administration by distributing certain tasks to your users over a web interface.
-At the moment the interface is implemented by REST handlers which can be called on submit to modify or add LDAP entries by a self designed graphical user interface (GUI) consisting of forms.
-The following chapters will explain the specification you need to satisfy and give some examples to give you a feeling how to use it. The plugin will grow over time and add new functionalities so stay tuned and read this document after each update. Of course there is an attempt to not alter the interface too much so that your forms are rendered useless after an update but there is a small chance that it could happen out of necessity.
+At the moment the interface is implemented by REST handlers which can be called on submit to modify or add LDAP entries by a self designed graphical user interface (GUI) consisting of forms.oriented The following chapters will explain the specification you need to satisfy and give some examples to give you a feeling how to use it. The plugin will grow over time and add new functionalities so stay tuned and read this document after each update. Of course there is an attempt to not alter the interface too much so that your forms are rendered useless after an update but there is a small chance that it could happen out of necessity.
 
 %TOC%
 
 ---++ Requirements
 
-For now this plugin is young and wishes to grow. It is currently developed for Linux and OpenLDAP. Hopefully the interface will grow much more abstract to provide functionality on different platforms.
+For now this plugin is young and wishes to grow. It is currently developed for Linux and !OpenLDAP. Hopefully the interface will grow much more abstract to provide functionality on different platforms.
 
-There are some requirements to be fulfilled before you can begin to build your web GUI. Of course you first need a LDAP server (OpenLDAP would be a good choice) and some experience in administration. For configuration of LdapGuiPlugin it is also useful to have basic knowledge of Perl. You will see why a little bit later in the following chapters. To configure the connection settings for this plugin, you should read the chapter "LDAP questionnaire" in the description of LdapContrib. LdapGuiPlugin does not extend the LdapContrib, because it targets a slightly different goal which is to provide not only read but also write access to a LDAP server. Also the LdapContrib is already a mature contribution and works well for the tasks it targets.
-So, lets get to the real requirements for the plugin to work.
+There are some requirements to be fulfilled before you can begin to build your web GUI. Of course you first need a LDAP server (!OpenLDAP would be a good choice) and some experience in administration. For configuration of !LdapGuiPlugin it is also useful to have basic knowledge of Perl. You will see why a little bit later in the following chapters. To configure the connection settings for this plugin, you should read the chapter "LDAP questionnaire" in the description of !LdapContrib. !LdapGuiPlugin does not extend the LdapContrib, because it targets a slightly different goal which is to provide not only read but also write access to a LDAP server. Also the !LdapContrib is already a mature contribution and works well for the tasks it targets.
+But some of the configuration is similar to LdapContrib. In fact, if you installed LdapContrib the LdapGuiPlugin can use its connection configuration.
 
 ---+++ Required
 
@@ -24,7 +23,9 @@ Perl modules you will need:
    * FormPlugin: The FormPlugin enables you to build HTML forms with extra features and has a implementation of the foswiki REST interface. Read its description for more Information.
    * LdapContrib: It allows you to populate your foswiki userbase and groups by data which stored in a LDAP server. Read its description for more information.
 
-Note: if you install the LdapContrib and want its settings to be used for LdapGuiPlugin you don't need to copy&paste. There is an option for that purpose.
+Note: if you install the LdapContrib and want its settings to be used for !LdapGuiPlugin you don't need to copy&paste. There is an option for that purpose.
+
+----
 
 ---++ Configuration
 
@@ -32,10 +33,81 @@ After you fulfilled the requirements and installed the plugin it needs some conf
 All chapters under this topic refer to settings in configure. ( http://foswiki.org/Support/InstallStepConfigureFoswiki )
 Note that this configurations have deep inpact on how the plugin actually works.
 
+---+++ Overview
+
+Before the detailed explanation, here is an overview of the configuration in configure.
+
+| *option* | *default value* | *description* |
+| *connection* |||
+| {Plugins}{LdapGuiPlugin}{LdapGuiServerHost}  | '127.0.0.1' | The host of your LDAP server |
+| {Plugins}{LdapGuiPlugin}{LdapGuiServerVersion}  | '3' | Server version |
+| {Plugins}{LdapGuiPlugin}{LdapGuiPort}  | 389 | LDAP port |
+| {Plugins}{LdapGuiPlugin}{LdapGuiUseSASL}  | 0 | Use SASL |
+| {Plugins}{LdapGuiPlugin}{LdapGuiSASLMechanism}  | 'PLAIN CRAM-MD5 EXTERNAL ANONYMOUS' | SASL mechanism to use |
+| {Plugins}{LdapGuiPlugin}{LdapGuiUseTLS}  | 0 | Use TLS |
+| {Plugins}{LdapGuiPlugin}{LdapGuiTLSSSLVersion}  | 'tlsv1' ||
+| {Plugins}{LdapGuiPlugin}{LdapGuiTLSVerify}  | 'require' ||
+| {Plugins}{LdapGuiPlugin}{LdapGuiTLSCAPath}  | ||
+| {Plugins}{LdapGuiPlugin}{LdapGuiTLSCAFile}  | ||
+| {Plugins}{LdapGuiPlugin}{LdapGuiTLSClientCert}  | ||
+| {Plugins}{LdapGuiPlugin}{LdapGuiTLSClientKey}  | ||
+| {LdapGuiPlugin}{LdapGuiAllowProxyBind}  | 0 ||
+| *LDAP structure* |||
+| {LdapGuiPlugin}{LdapGuiBaseDN}  | 'dc=my,dc=domain,dc=com' | Base DN of your LDAP DIT |
+| {LdapGuiPlugin}{LdapGuiUserBase}  | ['ou=people,dc=my,dc=domain,dc=com'] | List of user bases |
+| {LdapGuiPlugin}{LdapGuiUserBaseAliases}  | <verbatim>{ 
+    'people' => 'ou=people,dc=my,dc=domain,dc=com'
+};</verbatim> | user base aliases usable in forms |
+| {LdapGuiPlugin}{LdapGuiLoginAttribute}  | 'uid' | name of the attribute users must use to login |
+| {LdapGuiPlugin}{LdapGuiGroupBase}  | ['ou=group,dc=my,dc=domain,dc=com'] | base of all groups |
+| {LdapGuiPlugin}{LdapGuiAllowProxyUser}  | 0 | allow the plugin to bind against a proxy user to add new users to groups |
+| {LdapGuiPlugin}{LdapGuiBindDN}  | | proxy bind dn |
+| {LdapGuiPlugin}{LdapGuiBindPassword}  | 'secret' | proxy bind password |
+| {LdapGuiPlugin}{MemberAttribute}  | 'memberUid' | attribute name which value defines a group member |
+| {LdapGuiPlugin}{GroupAttribute}  | 'gidNumber' | attribute name which value refering a group |
+| {LdapGuiPlugin}{LdapGuiGroupIdentifier}  | <verbatim>{ 
+    '100' => 'cn=groupname,ou=group,dc=my,dc=domain,dc=com'
+}</verbatim> | values pointing to a group dn (here for gidNumber value) |
+| *glue function* |||
+| {LdapGuiPlugin}{LdapGuiGlueAllow}  | 0 | allow attribute construction |
+| {LdapGuiPlugin}{LdapGuiGlue}  | <verbatim>{
+   'cn' => {
+      'attributes' => [
+          'LdapFirstName',
+          'sn'
+          ],
+   'delimiter'  => ' '
+      }
+}</verbatim> | rules which define how attribute values are constructed |
+| *autoset* |||
+| {LdapGuiPlugin}{LdapGuiAllowAutosetNumericalAttributes}  | 0 | allow to set numerical attributes automatically |
+| {LdapGuiPlugin}{LdapGuiAutosetNumericalAttributes}  | <verbatim>{ 
+    'uidNumber' => { 
+        min => 1000,
+        max => 65535
+       }
+}</verbatim> | <p>defines which attributes should get autogenerated and in what range</p> <p>additionally you can add step =&gt; 2 to increment by 2 but 1</p> |
+| *misc* |||
+| {LdapGuiPlugin}{LdapGuiCharSet}  | 'utf-8' | |
+| {LdapGuiPlugin}{LdapGuiUseTrigger}  | 0 ||
+| {LdapGuiPlugin}{LdapGuiTriggerTargetURL}  | ||
+| {LdapGuiPlugin}{LdapGuiTriggerTargetPort}  | ||
+| {LdapGuiPlugin}{LdapGuiTrustedWebs}  | [] | a list of webs which are trusted, only requests from these webs are passed to processing |
+| {LdapGuiPlugin}{LdapGuiLoginSchema}  | <verbatim>{
+   'add' => {
+      'loginName' => 'LdapLoginAttributeName',
+      'loginPWD' => 'LdapLoginPasswordAttributeName'
+      },
+   'modify' => {
+      'loginName' => 'uid',
+      'loginPWD' => 'LdapLoginPasswordAttributeName'
+      }
+}</verbatim> | defines how your form logins should get named so that the plugin understands it |
+| {LdapGuiPlugin}{LdapGuiTestMode}  | 0 | starts the test mode, no write to the ldap will happen |
+
 ---+++ Connection settings
 
-Here you configure the way the plugin connects to your LDAP server. This part of the configuration is the same as for LdapContrib.
-You need to know:
+Here you configure the way the plugin connects to your LDAP server. This part of the configuration is the same as for LdapContrib, but you can also specify another LDAP server.Also the way LdapGuiPlugin binds to the server is almost the same as LdapContrib.You need to know:
    1 The servers hostname or IP adress. Defaults to 127.0.0.1 (localhost)
    1 The port your server is listening to. Defaults to 389.
    1 Should your server use SASL for authenticate connections? (strongly recommended)
@@ -76,7 +148,7 @@ You need to know:
 
 ---+++ GUI functionality
 
-This section is all about the actual usage of the plugin. These settings provide information about your specific LDAP structure and how the plugin gets the login data for binding .
+This section is all about configure options which have an impact on the usage of the plugin. These settings provide information about your specific LDAP structure and how the plugin gets the login data for binding .
 Here you need to know:
    1 The base dn of your LDAP. Defaults to dc=your,dc=domain,dc=com which will most likely not work for you. This is the root of your DIT where the plugin should operate.
    1 The user base/bases of your LDAP. This defaults to [ ou=people,dc=your,dc=domain,dc=com ] (This is a list!)
@@ -84,7 +156,7 @@ Here you need to know:
    1 The login attribute of your LDAP. Defaults to uid.
    1 The group attribute of your LDAP. Defaults to gidNumber.
    1 The group member attribute of your LDAP. Defaults to memberUid.
-   1 How the login schema should be organized for add and modify data. This option is crucial to be able to connect to the LDAP because the plugin will search for these formfield names to get the credentials to bind to the server. (%RED%make sure to choose names which are not LDAP attributes!%ENDCOLOR%) example: <verbatim> {
+   1 How the login schema should be organized for add and modify data. This option is crucial to be able to connect to the LDAP because the plugin will search for these formfield names to get the credentials to bind to the server. (%RED%make sure to choose names which are not LDAP attributes! But you can use the loginattribute to associate a modify operation directly with the logged in user.%ENDCOLOR%) example: <verbatim> {
   'add' => {
              'loginName' => 'LdapLoginAttributeName',
              'loginPWD' => 'LdapLoginPasswordAttributeName'
@@ -93,8 +165,8 @@ Here you need to know:
                 'loginName' => 'uid',
                 'loginPWD' => 'LdapLoginPasswordAttributeName'
               }
-} </verbatim> this means for the LdapGuiPlugin /addData handler, the plugin searches for the fields LdapLoginAttributeName and LdapLoginPasswordAttributeName to bind against.
-   1 At the moment only the uidNumber can be set automatically. So there is an option to do so. Hopefully this feature will get abstracted to be able to autoset numerical attributes.
+} </verbatim> this means for the !LdapGuiPlugin /addData handler, that the plugin searches for the fields !LdapLoginAttributeName and !LdapLoginPasswordAttributeName to bind against. For /modifyData it means, it is always searched for the uid and bind against that value.
+   1 You can set positive, numerical attributes automatically for new entries by a simple increment function. This can be used to autoset the uidNumber for a new user for example. This happens globally by an option in configure, so there is no option for a form to deactivate it.
 
 ---+++ Extended LDAP GUI functionality
 
@@ -104,7 +176,7 @@ These configurations are not necessary but can be useful to you. These settings 
 
 This is the configuration for the option called 'LdapGuiGlue'. You can use this option later to construct ('glue together') LDAP attributes out of form data, static strings and/or a format. (e.g.: cn = givenName + sn where givenName and sn are inside the form -&gt; cn will be "glued together" automatically)
 To do so you need to configure some rules how these attributes should be 'glued together'.
-Gluerules are specified to be a hash containing 2 - 4 parameter keys. Note that this specification will change because it has great potential to be both: extended and simplified.
+Gluerules are specified to be a hash containing 2 - 4 parameter keys. Note that this specification will most likely change because it has great potential to be both: extended and simplified.
 
 ---+++++ Necessary parameters
    * delimiter
@@ -179,8 +251,9 @@ Note:
    * You should not construct cyclic rules (e.g.: A = B+C, B = A+C, C='oh oh' ).
    * The attribute which gets constructed will get ignored even if you have a form field with the same name (e.g. there is no form field 'uid' needed and it would be ignored)
    * 'asString' is a bitmask.
+   * The feature is not flexible enough to contruct multiple values for one attribute automatically.
 
-Now you specified that the function LdapGuiGlue can be used in a form to construct the LDAP attributes uid, homeDirectory and cn. This means for example that if you want to generate the uid you just need to define a form field 'sn'. Now your form must only send the information that the uid should get constructed by inserting:
+Now you specified that the function LdapGuiGlue can be used in a form to construct the LDAP attributes uid, homeDirectory and cn. This means for example that if you want to generate the uid you just need to define a form field 'sn'. Now your form must only send the information, that the uid should get constructed with by inserting:
    * <verbatim><input type="hidden" name="LdapGuiGlue" value="uid"/></verbatim> for simple html or
    * <verbatim>%FORMELEMENT{
    name="LdapGuiGlue"
@@ -188,7 +261,9 @@ Now you specified that the function LdapGuiGlue can be used in a form to constru
    value="uid"
 }%</verbatim> for the FormPlugin
 
----++ Specification
+----
+
+---++ Usage / building a GUI
 
 LdapGuiPlugin gives you just an interface for your own GUI on Foswiki. This is implemented by a set of REST handlers.
 When you design forms for the GUI, you design the queries which the LdapGuiPlugin will process. These queries need a form so that LdapGuiPlugin can handle them to build reasonable entries out of the data the query holds. Also of course the access configuration of the LDAP server should be suitable. A form could be perfectly serve your needs, but if the users can't change anything because of the LDAP ACLs this plugin can't do magic. (well you could bypass it by a proxy user but this is suicide)
@@ -207,19 +282,37 @@ The goal of the plugin is to perform LDAP actions preferably by a form submit. I
 ---+++ Form fields
    * A formfield which represents a LDAP attribute must have the same name as the LDAP attribute. (LDAP attribute: sn =&gt; form field name = sn) Otherwise the plugin will not recognize it.
    * Also the attribute you wish to use needs to be defined by the LDAP schema.
-   * Any other attribute, which is not known by the LDAP schema gets ignored. This is not the case if and only if the form field name represents an option, or is used explicitly by an option.
+   * There are special GUI based options defined by the plugin. These are names which are known by the plugin to trigger functionality. (do not confuse with configure options)
+   * Any other attribute, which is not an option or not known by the LDAP schema, gets ignored.
    * LDAP attribute names are case insensitive and so are form field names.
    * There are no explicit checks if the attribute is able to have multiple values at the moment. If one does not pay attention to that fact the plugin may fails. For example if your form tries to submit multiple values for the attribute 'gidNumber' which is defined single valued.
+Example for form fields which represent LDAP attributes:
 
+<verbatim>
+<input name="sn" type="text" "">
+<input name="HOmEdIReCtoRY" type="text" "">
+<input name="givenName" type="text" ""></verbatim>
+
+Example for form fields which represent LDAP options:
+
+<verbatim>
+<input name="HASHME" type="hidden" value="userPassword=ssha">
+<input name="ldapguiglue" type="hidden" "uid,cn"></verbatim>
 ---+++ Option fields
 
 LdapGuiPlugin comes with a set of possible options which are able to influence the workflow of LdapGuiPlugin. Options are simply form fields with a special name and a value. The easiest approach to use an option is to create a hidden input tag.
 The following subchapters will show which option you can use for which form type and what they do.
+Here is an overview of all option fields:
+| *option* | *what does it?* |
+| LdapGuiGlue  | Defines which attributes for the current form must get constructed. |
+| HashMe | Defines which attributes of the current form must get hashed and which methods must be used. |
+| LdapGuiAddToUserBase | Defines in which userbase the entry must be inserted (if adding a new entry) |
+
 ---++++ For all form types available
 ---+++++ LdapGuiGlue
 
 If you read the chapter above you already know how to configure the LdapGuiGlue functionality. It is defined that this function does not apply itself automatically for all forms, because is could be the case one want to construct a form where every attribute should get typed in. Therefore you need to insert an option field into your form which tells the plugin to cunstruct a certain set of attributes. Therefore you even saw an example already. To remember you:
-   * <verbatim><input type="hidden" name="LdapGuiGlue" value="uid"/></verbatim> for simple html or
+   * <verbatim><input type="hidden" name="LdapGuiGlue" value="uid"/></verbatim> for simple html
    * <verbatim>%FORMELEMENT{
    name="LdapGuiGlue"
    type="hidden"
@@ -227,7 +320,7 @@ If you read the chapter above you already know how to configure the LdapGuiGlue 
 }%</verbatim>
 By that single option field you now tell the plugin to cunstruct the uid out of existing attributes. In the example cunfiguration above this happens by building it out of the 'sn' form field. (which you need to define of course)
 
----+++++ LdapGuiHashAttribute
+---+++++ [[LdapGuiHashAttribute][Hashme]]
 
 The plugin comes with the ability to store hashes inside the LDAP. This comes in handy if you want to store hashed passwords which enable users to log in over LDAP. The plugin supports the following types of hashes:
    * SHA
@@ -237,7 +330,7 @@ The plugin comes with the ability to store hashes inside the LDAP. This comes in
    * SMD5
 
 At the moment the resulting hashes have the same structure as if generated by slappasswd so that they can be used to log in users.
-Note that this option has a slightly different syntax which must be followed. For each attribute you want to hash, you need to insert an own option field with the name 'HASHME'. The value must start with the attribute name which you wish to be hashed, followed by '=' and ending with a comma seperated list of hash types to be stored. Note that you should not try to store multiple hashes in attributes which are single valued. To give a example:
+Note that this option has a slightly different syntax which one must follow. For each attribute you want to hash, you need to insert an own option field with the name 'HASHME'. The value must start with the attribute name which you wish to be hashed, followed by '=' and ending with a comma seperated list of hash types to be stored. Note that you should not try to store multiple hashes in attributes which are single valued. To give a example:
 You want to store the inputs for the userPassword form field as hashes. You want to use CRYPT, SHA, SSHA, MD5 and SMD5. The resulting option field is:
 <verbatim>%FORMELEMENT{
    name="HASHME"
@@ -245,7 +338,7 @@ You want to store the inputs for the userPassword form field as hashes. You want
    value="userPassword=sha,ssha,smd5,md5,crypt"
 }%</verbatim>
 
-Everything is case insensitive. If for example a user of your form types in the  value 'abcd12AB' as a password the stored values could be:
+If for example a user of your form types in the  value 'abcd12AB' as a password the stored values could be:
 <verbatim>
 userPassword: {SHA}2Ky05bDZLtah6bEXwMtPd1ZeUD0=
 userPassword: {SSHA}UJvDy13UQpqPedUIXdPP8whJF8vFbTa6
@@ -253,6 +346,7 @@ userPassword: {SMD5}S5Ze1/Ort25FiqSGyBaUemFiY2Q=
 userPassword: {MD5}+fcj3ntVthYOpNtHyyu8IQ==
 userPassword: {CRYPT}nw37xSELAvmTI</verbatim>
 
+If you want to store hashed values with forms other than that, you need some perl knowledge. The supported methods for hashing are implemented inside the Hash.pm. Feel free to improve this class or contribute new hash methods to it.
    * LdapGuiAddToUserBase
 
 ---+++ Option fields
@@ -302,26 +396,12 @@ You must use a seperate LDAP login. There should be not many different cases how
 
 ---++ Trigger API
 
-It should be possible for specific actions to trigger workflow scripts which deal with associated data after it was successfully written to the LDAP.
-At the moment there are 3 possible solutions:
+It should be possible for specific actions to trigger workflow scripts which deal with associated data after it was successfully written to the LDAP.Possible solutions are:
    * Use a suitable LDAP backend. For slapd there are backends like slapd-sock, slapd-perl or slapd-shell which can be used.
    * If you do not need an instant trigger you could use a cron-job solution with searches.
-   * You use a HTTP daemon which communicates directly with LdapGuiPlugin.
-The trigger API for LdapGuiPlugin does exactly what is described in the third item. It offers a small handy interface to trigger a HTTP daemon after a LdapGuiPlugin request succeeded.
-By that you are not bound to the apache user and you are able to let the LdapGuiPlugin trigger scripts from the outside on another access level. Of course this will make your system less safe this functionality comes with a risk.
-
----+++ Workflow of the trigger API
----+++ Cross Site Request Forgery (CSRF)
-
-One of the dangers is CSRF. This means an attacker would just need to build an own form with malicious form fields and trick a users with adequate priviliges into submitting this form while the user is logged in.
-
-The trigger API tries to prevent this by showing best practises for configuration of the plugin and by defining how the daemon should work like.
----++++ Trigger configuration
----++++ Daemon spec
----+++ Usage
----+++ LdapGuiPlugin - Daemon API
-
-LdapGuiPlugin has a small API which can be used to trigger events based on LDAP.
+   * Insert flags into the DIT which indicate that a script needs to get started. Another program (cronjob or something else) could consume the information and trigger events.
+   * You use a daemon which communicates directly with LdapGuiPlugin.
+For the last suggestion a simple calling API for daemon based solution is planned.
 
 ---++ LdapGuiPlugin defined Macros
 
@@ -333,23 +413,23 @@ For example if you want to display a users common name (cn) use:
 <verbatim>%LDAPGETATTRIBUTE{attribute="cn"}%</verbatim>
 
 If you don't use the LdapUserMapping, or a user has not the access to the attribute, or some other issue prevented the macro to succeed, it will return nothing.
+If multiple values are wanted (for example to fill in options for a select box) there is an option called 'max'. With that you can specify the maximum number of values which should get retrieved.
+Out comes a comma seperated list of values.
+Example:
+<verbatim>%LDAPGETATTRIBUTE{attribute="email" max="5"}%</verbatim>
 
----+++ JSONRegexp
+The output could be:
 
-This macro escapes regular expressions which appear inside a JSON string so the regular expression does not break JSON by illegal escape sequences.
-
-usage (inside a JSON string):
-<verbatim>%JSONREGEXP{regexp="/^(?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?!.*\s).{8,75}$/"}%</verbatim>
-
----++ Security and safety precautions
-
-Because this plugin offers the ability to distribute certain subsets of administrative tasks, it needs to have write access to the LDAP DIT. For that reason it must provide security mechanisms. Furthermore the foswiki and LDAP server administrators need to be careful while configuring the plugin and access controls of the LDAP.  In this section you will find descriptions of how the plugin tries to enforce basic security and what an LDAP administrator should do to prevent abuse of functionality.
-
----++ More Examples
-
-%RED%(PLANNED)%ENDCOLOR%
+<verbatim>
+email1@domain.com,email2@domain.com,email3@domain.com,email4@domain.com,email5@domain.com</verbatim>
 
    * Set SHORTDESCRIPTION = Interface for building a form based LDAP GUI over Foswiki
+
+---++ Tips
+   * Organize your GUI in a own web. This way you can protect them by the configure option "trusted webs", so that requests from other webs won't work. After all it is a plugin, and anyone could use the handlers.
+   * Use the access controls of Foswiki to map to your LDAP ACLs. 
+   * Play around in the Testmode until everything looks fine.
+   * report bugs
 
 ---++ Plugin Info
 

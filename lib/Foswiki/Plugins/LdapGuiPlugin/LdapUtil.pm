@@ -462,7 +462,14 @@ sub ldapModify {
                 ];
                 push @$test, "Attributes to replace:";
                 foreach ( keys %{$replace} ) {
-                    push @$test, "replace attribute: $_ => $replace->{$_}";
+                    if ( ref $replace->{$_} eq "ARRAY" ) {
+                        foreach my $replelem ( @{ $replace->{$_} } ) {
+                            push @$test, "replace attribute: $_ => $replelem";
+                        }
+                    }
+                    else {
+                        push @$test, "replace attribute: $_ => $replace->{$_}";
+                    }
                 }
 
                 push @$test, "Attributes to add:";
@@ -545,12 +552,21 @@ sub ldapModify {
     return 1;
 }
 
+=pod
+
+=cut
+
 sub getModifyHash {
     my $this    = shift;
     my $entry   = shift;
     my $data    = shift;
     my $opts    = shift;
-    my $modHash = { add => {}, delete => {}, delattr => [], replace => {} };
+    my $modHash = {
+        add     => {},
+        delete  => {},
+        delattr => [],
+        replace => {}
+    };
     return 0 unless ( defined $entry );
     unless ( defined $data ) {
         $data = $this->{attributes};
@@ -564,13 +580,17 @@ sub getModifyHash {
 
         #add
         if ( exists $opts->{add}->{ lc $key } ) {
+
+            #check for defined, we only add if there is a value to add
             if ( $size > 1 ) {
                 foreach ( @{ $data->{$key} } ) {
-                    push @{ $modHash->{add}->{$key} }, $_;
+                    push @{ $modHash->{add}->{$key} }, $_ if ( defined $_ );
                 }
             }
             elsif ( $size == 1 ) {
-                $modHash->{add}->{$key} = $data->{$key}->[0];
+
+                $modHash->{add}->{$key} = $data->{$key}->[0]
+                  if ( defined $data->{$key}->[0] );
             }
             else {
             }
@@ -610,6 +630,7 @@ sub getModifyHash {
             }
 
             #replace
+
             if (@entryValues) {
                 if ( @{ $data->{$key} } ) {
                     if ( ( @{ $data->{$key} } == 1 ) && ( @entryValues == 1 ) )

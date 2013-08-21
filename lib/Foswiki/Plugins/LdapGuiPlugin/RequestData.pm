@@ -535,6 +535,22 @@ sub getGroupDN {
     return $this->{groupDN};
 }
 
+sub hasDN {
+    my $this = shift;
+    if ( exists $this->{other}->{dn} ) {
+        return 1;
+    }
+    return 0;
+}
+
+sub getDN {
+    my $this = shift;
+    if ( exists $this->{other}->{dn} ) {
+        return $this->{other}->{dn};
+    }
+    return [];
+}
+
 =pod
 
 =cut

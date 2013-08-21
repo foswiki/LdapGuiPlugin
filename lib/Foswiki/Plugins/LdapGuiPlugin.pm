@@ -8,6 +8,7 @@ use CGI;
 use Foswiki::Plugins::LdapGuiPlugin::RequestData;
 use Foswiki::Plugins::LdapGuiPlugin::LdapUtil;
 use Foswiki::Plugins::LdapGuiPlugin::Error;
+use Foswiki::Plugins::LdapGuiPlugin::Renderer;
 
 our $VERSION           = '0.1';
 our $RELEASE           = '0.1';
@@ -16,7 +17,7 @@ our $NO_PREFS_IN_TOPIC = 1;
 our $pluginName        = 'LdapGuiPlugin';
 
 =pod
-
+ authenticate=>1, validate=>1, http_allow=>'POST'
 =cut
 
 sub initPlugin {
@@ -118,55 +119,102 @@ sub _modifyData {
         return $error->errorRenderHTML( $web, $topic );
     }
 
-    my $requestData =
-      Foswiki::Plugins::LdapGuiPlugin::RequestData->new( $query, $option,
-        $ldapUtil->getSchema, $error,
-        [ 'name', $Foswiki::cfg{Plugins}{LdapGuiPlugin}{MemberAttribute} ] )
-      ;    #name clashes with FormPlugin
+    my $requestData = Foswiki::Plugins::LdapGuiPlugin::RequestData->new(
+        $query, $option,
+        $ldapUtil->getSchema,
+        $error,
+        [
+            'name', $Foswiki::cfg{Plugins}{LdapGuiPlugin}{MemberAttribute},
+            $loginAttributeName
+        ]
+    );    #TODO name clashes with FormPlugin -> for now its hardcoded ignored
     if ( $requestData->hasError() || $error->hasError() ) {
         $error->writeErrorsToDebug();
         return $error->errorRenderHTML( $web, $topic );
     }
 
     my $password  = ${ $requestData->getOtherByName($formLoginPW) }[0];
-    my $loginAttr = $requestData->getAttributeByName($loginAttributeName);
+    my $loginAttr = $requestData->getOtherByName($loginAttributeName);
 
     my $userBase = $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiUserBase};
     my $user     = @{$loginAttr}[0];
-    my $args     = {
+
+    my $targetDN = undef;
+    if ( $requestData->hasDN() ) {
+        $targetDN = $requestData->getOtherByName('dn');
+    }
+
+    my $args = {
         base   => @{$userBase}[0],
         scope  => 'sub',
         filter => "$loginAttributeName=$user"
     };
-    $error->writeErrorsToDebug();
+    my $bindEntry;
+    my $targetEntry;
+
     my $result = $ldapUtil->ldapSearch($args);
 
-    #		Foswiki::Func::writeDebug( "SC:  " . $result->count() );
-    my $entry;
-
+    #Foswiki::Func::writeDebug( "SC:  " . $result->count() );
     if ( $result->count() == 1 ) {
-        $entry = $result->pop_entry();
+        $bindEntry = $result->pop_entry();
     }
     else {
-        $error->addError(
-            'MORE_THAN_ONE_USER',
-            [
-"The user $user is defined multiple times in the user base. Can not find out which one to modify"
-            ]
-        );
+        my $entries = [ $result->entries() ];
+        my $msg     = [
+"The user $user was not found, or defined multiple times in the user base. Can not find out which one to bind to",
+            "matched DN:"
+        ];
+        foreach (@$entries) {
+            push @$msg, $_->dn();
+        }
+        $error->addError( 'NO_OR_MORE_THAN_ONE_MATCH', $msg );
+    }
+    if ( defined $targetDN and @{$targetDN} == 1 and ( $$targetDN[0] ne '' ) ) {
+
+        #Foswiki::Func::writeDebug($targetDN);
+        $args = {
+            base   => @{$targetDN}[0],
+            scope  => 'base',
+            filter => "(objectclass=*)"
+        };
+        $result = $ldapUtil->ldapSearch($args);
+
+        #Foswiki::Func::writeDebug( "SC:  " . $result->count() );
+        if ( $result->count() == 1 ) {
+            $targetEntry = $result->pop_entry();
+        }
+        else {
+            my $entries = [ $result->entries() ];
+            my $msg     = [
+                "The DN "
+                  . @{$targetDN}[0]
+                  . " was not found, or matched multiple times",
+                "matched DN:"
+            ];
+            foreach (@$entries) {
+                push @$msg, $_->dn();
+            }
+            $error->addError( 'NO_OR_MORE_THAN_ONE_MATCH', $msg );
+        }
+    }
+    else {
+        $targetEntry = $bindEntry;
     }
 
-    unless ( defined $entry ) {
+    unless ( defined $bindEntry and defined $targetEntry ) {
         $error->writeErrorsToDebug();
         return $error->errorRenderHTML( $web, $topic );
     }
 
-    $error->writeErrorsToDebug();
-    my $bindDN = $entry->dn();
-    $error->writeErrorsToDebug();
+    my $bindDN = $bindEntry->dn();
+
+    if ( $error->hasError ) {
+        $error->writeErrorsToDebug();
+        return $error->errorRenderHTML( $web, $topic );
+    }
 
     my $modifyHash =
-      $ldapUtil->getModifyHash( $entry, $requestData->getAttributes(),
+      $ldapUtil->getModifyHash( $targetEntry, $requestData->getAttributes(),
         $option->getModifyOptions );
     $error->writeErrorsToDebug();
 
@@ -178,7 +226,7 @@ sub _modifyData {
     }
     if (
         $ldapUtil->ldapModify(
-            $entry->dn(), $password, $entry->dn(), $modifyHash
+            $bindEntry->dn(), $password, $targetEntry->dn(), $modifyHash
         )
       )
     {
@@ -195,12 +243,15 @@ sub _modifyData {
         $error->writeErrorsToDebug();
         return $error->errorRenderHTML( $web, $topic );
     }
-    my $url = Foswiki::Func::getScriptUrl(
-        $web, $topic, 'oops',
-        template => "oopssaveerr",
-        param1   => "Successfully modified your data $user :-)"
-    );
-    Foswiki::Func::redirectCgiQuery( undef, $url );
+
+    my $renderer = Foswiki::Plugins::LdapGuiPlugin::Renderer->new();
+    $renderer->title('Modify Successful');
+    $renderer->headl2('Modify Successful');
+    $renderer->headl3('Modifications:');
+    $renderer->modification($modifyHash);
+    $renderer->break(2);
+    $renderer->linkback( $web, $topic );
+    return $renderer->writePage();
     return 1;
 }
 
@@ -582,12 +633,14 @@ sub _addData {
     $error->writeErrorsToDebug();    #should tell: NO ERROR
                                      #add group
 
-    #TODO: write to a file in working/LdapGuiPlugin/uid.ltc as marker
+    #TODO: needs file locks
     #TODO: build option for triggers
-    my $content   = $requestData->getContent;
-    my $uniqeName = $requestData->getAttributeByName($loginAttributeName)->[0];
-    _startTrigger( $content, $uniqeName, $error );
-
+    if ( $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiUseTrigger} ) {
+        my $content = $requestData->getContent;
+        my $uniqeName =
+          $requestData->getAttributeByName($loginAttributeName)->[0];
+        _startTrigger( $content, $uniqeName, $error );
+    }
     if (   $Foswiki::cfg{Plugins}{LdapGuiPlugin}{LdapGuiTestMode}
         or $error->hasError )
     {
@@ -596,8 +649,14 @@ sub _addData {
     }
 
     #happy we are
-
-    return _renderSuccessAdd( $web, $topic, $entry );
+    my $renderer = Foswiki::Plugins::LdapGuiPlugin::Renderer->new();
+    $renderer->title('Add successful');
+    $renderer->headl2('Your add request was successfull');
+    $renderer->headl3('Entry added:');
+    $renderer->entry($entry);
+    $renderer->break(2);
+    $renderer->linkback( $web, $topic );
+    return $renderer->writePage();
 }
 
 sub _getLockFile {
@@ -679,40 +738,6 @@ sub _startTrigger {
     }
 
     return 0;
-}
-
-=pod
-
-=cut
-
-sub _renderSuccessAdd {
-    my $web   = shift;
-    my $topic = shift;
-    my $entry = shift;
-    my $linkback =
-        $Foswiki::{cfg}{DefaultUrlHost}
-      . $Foswiki::{cfg}{ScriptUrlPaths}{view}
-      . "/$web.$topic";
-    my $insert = '<h2>Your Entry was successfully submitted</h2>';
-    $insert = $insert . "<h3>The following values were submitted: <br/><br/>";
-    $insert = $insert . 'dn: ' . uri_unescape( $entry->dn ) . '<br/>';
-    foreach my $attribute ( $entry->attributes ) {
-        my $values = $entry->get_value( $attribute, asref => 1 );
-        $attribute = uri_unescape($attribute);
-        if ( defined $values ) {
-            foreach my $value (@$values) {
-                $value  = uri_unescape($value);
-                $insert = $insert . "$attribute: $value<br/>";
-            }
-        }
-        else {
-            $insert = $insert . "$attribute: <br/>";
-        }
-    }
-    $insert = $insert . "<br/><br/><a href=\"$linkback\">Go back</a>";
-    my $page =
-      CGI::start_html( -title => 'Success' ) . $insert . CGI::end_html();
-    return $page;
 }
 
 =pod
