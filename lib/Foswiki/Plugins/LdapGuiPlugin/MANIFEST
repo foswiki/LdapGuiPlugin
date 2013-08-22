@@ -1,6 +1,15 @@
-!noci
-data/System/LdapGuiPlugin.txt 0644 Documentation page
-data/System/VarEXAMPLETAG.txt 0644 Tag documentation
-data/Sandbox/PluginTestLdapGuiPlugin.txt 0644 Examples
-lib/Foswiki/Plugins/LdapGuiPlugin.pm 0444 Perl module
-lib/Foswiki/Plugins/LdapGuiPlugin/Config.spec 0444 Configuration
+data/System/LdapGuiPlugin.txt 0644
+lib/Foswiki/Plugins/LdapGuiPlugin.pm 0644
+lib/Foswiki/Plugins/LdapGuiPlugin/Config.spec 0644
+lib/Foswiki/Plugins/LdapGuiPlugin/Error.pm 0644
+lib/Foswiki/Plugins/LdapGuiPlugin/Hash.pm 0644
+lib/Foswiki/Plugins/LdapGuiPlugin/LdapGuiGlue/Glue.pm 0644
+lib/Foswiki/Plugins/LdapGuiPlugin/LdapGuiGlue/Node.pm 0644
+lib/Foswiki/Plugins/LdapGuiPlugin/LdapGuiGlue/RootNode.pm 0644
+lib/Foswiki/Plugins/LdapGuiPlugin/LdapGuiGlue/StringNode.pm 0644
+lib/Foswiki/Plugins/LdapGuiPlugin/LdapUtil.pm 0644
+lib/Foswiki/Plugins/LdapGuiPlugin/Option.pm 0644
+lib/Foswiki/Plugins/LdapGuiPlugin/Renderer.pm 0644
+lib/Foswiki/Plugins/LdapGuiPlugin/RequestData.pm 0644
+test/unit/LdapGuiPlugin/LdapGuiPluginSuite.pm 0644
+test/unit/LdapGuiPlugin/LdapGuiPluginTests.pm 0644

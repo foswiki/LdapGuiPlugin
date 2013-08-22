@@ -1,14 +1,23 @@
-%META:TOPICINFO{author="felberrobert" comment="reprev" date="1377073686" format="1.1" reprev="17" version="17"}%
 ---+ !LdapGuiPlugin
 
 This plugin enables you to build a self defined LDAP GUI to ease administration by distributing certain tasks to your users over a web interface.
-At the moment the interface is implemented by REST handlers which can be called on submit to modify or add LDAP entries by a self designed graphical user interface (GUI) consisting of forms.oriented The following chapters will explain the specification you need to satisfy and give some examples to give you a feeling how to use it. The plugin will grow over time and add new functionalities so stay tuned and read this document after each update. Of course there is an attempt to not alter the interface too much so that your forms are rendered useless after an update but there is a small chance that it could happen out of necessity.
+At the moment the interface is implemented by REST handlers which can be called on submit to modify or add LDAP entries by a self designed graphical user interface (GUI) consisting of forms.
+
+The problems intended to be solved by this plugin are recurring, easy modifications to LDAP data which could be done by users, because they have the knowledge about the data.
+An example is that someone wants to change his email adress or data changed because the user moved to another office.
+That often happens over intern solutions or over an administrator because you can not expect them to know what LDAP does.
+So this plugin tries to provide the tools to make such things invisible and put everything together into a web based GUI.
+And because it is a Foswiki plugin the GUI can be designed and described flexibly.
+
+The LdapGuiPlugin ist in an experimental state right now and will grow over time to add new functionalities. Of course there is an attempt to not alter the interface too much so that your forms are rendered useless after an update but there is a small chance that it could happen out of necessity.
+
+The following chapters will explain the specification you need to satisfy and give some examples to give you a feeling how to use it.
 
 %TOC%
 
 ---++ Requirements
 
-For now this plugin is young and wishes to grow. It is currently developed for Linux and !OpenLDAP. Hopefully the interface will grow much more abstract to provide functionality on different platforms.
+This plugin is currently developed for Linux and !OpenLDAP. Hopefully the interface will grow much more abstract to provide functionality on different platforms. The behavior on other systems is not tested yet.
 
 There are some requirements to be fulfilled before you can begin to build your web GUI. Of course you first need a LDAP server (!OpenLDAP would be a good choice) and some experience in administration. For configuration of !LdapGuiPlugin it is also useful to have basic knowledge of Perl. You will see why a little bit later in the following chapters. To configure the connection settings for this plugin, you should read the chapter "LDAP questionnaire" in the description of !LdapContrib. !LdapGuiPlugin does not extend the LdapContrib, because it targets a slightly different goal which is to provide not only read but also write access to a LDAP server. Also the !LdapContrib is already a mature contribution and works well for the tasks it targets.
 But some of the configuration is similar to LdapContrib. In fact, if you installed LdapContrib the LdapGuiPlugin can use its connection configuration.
@@ -27,7 +36,7 @@ Note: if you install the LdapContrib and want its settings to be used for !LdapG
 
 ----
 
----++ Configuration
+---++ Configuration in configure
 
 After you fulfilled the requirements and installed the plugin it needs some configuration before you can start to use it properly. You could need a little Perl knowledge but you don't need to.
 All chapters under this topic refer to settings in configure. ( http://foswiki.org/Support/InstallStepConfigureFoswiki )
@@ -119,6 +128,7 @@ Here you configure the way the plugin connects to your LDAP server. This part of
 ---+++++ Example
 
 (# charaters define commentary begin)
+
 <verbatim>
 #LDAP
 {Plugins}{LdapGuiPlugin}{LdapGuiServerHost} = 127.0.0.1
@@ -148,7 +158,7 @@ Here you configure the way the plugin connects to your LDAP server. This part of
 
 ---+++ GUI functionality
 
-This section is all about configure options which have an impact on the usage of the plugin. These settings provide information about your specific LDAP structure and how the plugin gets the login data for binding .
+This section is all about configure options which have an impact on the usage of the plugin. These settings provide information about your specific LDAP structure and how the plugin gets the login data for binding.
 Here you need to know:
    1 The base dn of your LDAP. Defaults to dc=your,dc=domain,dc=com which will most likely not work for you. This is the root of your DIT where the plugin should operate.
    1 The user base/bases of your LDAP. This defaults to [ ou=people,dc=your,dc=domain,dc=com ] (This is a list!)
@@ -172,7 +182,7 @@ Here you need to know:
 
 These configurations are not necessary but can be useful to you. These settings have no effect until you actually use the corresponding option inside your forms, but they define what will be possible.
 
----++++ LdapGuiGlue
+---++++ !LdapGuiGlue
 
 This is the configuration for the option called 'LdapGuiGlue'. You can use this option later to construct ('glue together') LDAP attributes out of form data, static strings and/or a format. (e.g.: cn = givenName + sn where givenName and sn are inside the form -&gt; cn will be "glued together" automatically)
 To do so you need to configure some rules how these attributes should be 'glued together'.
@@ -217,6 +227,7 @@ We want to be able to automatically construct the LDAP attributes 'uid', 'homeDi
       1 uid = lowercase ( sn )
 
 For this you need the following configuration for {Plugins}{LdapGuiPlugin}{LdapGuiGlue}:
+
 <verbatim>
   'homeDirectory' => {
                        'delimiter' => '',
@@ -268,6 +279,7 @@ Now you specified that the function LdapGuiGlue can be used in a form to constru
 LdapGuiPlugin gives you just an interface for your own GUI on Foswiki. This is implemented by a set of REST handlers.
 When you design forms for the GUI, you design the queries which the LdapGuiPlugin will process. These queries need a form so that LdapGuiPlugin can handle them to build reasonable entries out of the data the query holds. Also of course the access configuration of the LDAP server should be suitable. A form could be perfectly serve your needs, but if the users can't change anything because of the LDAP ACLs this plugin can't do magic. (well you could bypass it by a proxy user but this is suicide)
 
+For creating GUIs you just need to know how to build HTML forms or you can use a plugin which is able to create them.
 ---+++ Form
 
 The goal of the plugin is to perform LDAP actions preferably by a form submit. It is also possible to invoke an action by a request URL, but this approach may be too troublesome. Therefore you must know how the form should look like and what content it represents.
@@ -275,9 +287,10 @@ The goal of the plugin is to perform LDAP actions preferably by a form submit. I
    * Your form has a type which indicates the action the plugin will perform by the defined formdata(add, modify, ...). This means the plugin needs to know some of the semantics of your form to process the data correctly. Therefore use what you need by calling one of the currently available REST handlers:
       * LdapGuiPlugin /addData when your form adds a new entry
       * LdapGuiPlugin /modifyData when your form modifies and existing entry
-      * LdapGuiPlugin /moveEntry when you want to move an entry for example from one subtree to another %RED% not yet available %ENDCOLOR%
    * The REST handler must be called on submit with the formfield data as parameters
    * Use the POST method
+
+Deleting entries is not yet implemented and may should not be handled by the plugin in the first place.
 
 ---+++ Form fields
    * A formfield which represents a LDAP attribute must have the same name as the LDAP attribute. (LDAP attribute: sn =&gt; form field name = sn) Otherwise the plugin will not recognize it.
@@ -287,14 +300,12 @@ The goal of the plugin is to perform LDAP actions preferably by a form submit. I
    * LDAP attribute names are case insensitive and so are form field names.
    * There are no explicit checks if the attribute is able to have multiple values at the moment. If one does not pay attention to that fact the plugin may fails. For example if your form tries to submit multiple values for the attribute 'gidNumber' which is defined single valued.
 Example for form fields which represent LDAP attributes:
-
 <verbatim>
 <input name="sn" type="text" "">
 <input name="HOmEdIReCtoRY" type="text" "">
 <input name="givenName" type="text" ""></verbatim>
 
 Example for form fields which represent LDAP options:
-
 <verbatim>
 <input name="HASHME" type="hidden" value="userPassword=ssha">
 <input name="ldapguiglue" type="hidden" "uid,cn"></verbatim>
@@ -304,12 +315,12 @@ LdapGuiPlugin comes with a set of possible options which are able to influence t
 The following subchapters will show which option you can use for which form type and what they do.
 Here is an overview of all option fields:
 | *option* | *what does it?* |
-| LdapGuiGlue  | Defines which attributes for the current form must get constructed. |
-| HashMe | Defines which attributes of the current form must get hashed and which methods must be used. |
-| LdapGuiAddToUserBase | Defines in which userbase the entry must be inserted (if adding a new entry) |
+| !LdapGuiGlue  | Defines which attributes for the current form must get constructed. |
+| !HashMe | Defines which attributes of the current form must get hashed and which methods must be used. |
+| !LdapGuiAddToUserBase | Defines in which userbase the entry must be inserted (if adding a new entry) |
 
 ---++++ For all form types available
----+++++ LdapGuiGlue
+---+++++ !LdapGuiGlue
 
 If you read the chapter above you already know how to configure the LdapGuiGlue functionality. It is defined that this function does not apply itself automatically for all forms, because is could be the case one want to construct a form where every attribute should get typed in. Therefore you need to insert an option field into your form which tells the plugin to cunstruct a certain set of attributes. Therefore you even saw an example already. To remember you:
    * <verbatim><input type="hidden" name="LdapGuiGlue" value="uid"/></verbatim> for simple html
@@ -320,7 +331,7 @@ If you read the chapter above you already know how to configure the LdapGuiGlue 
 }%</verbatim>
 By that single option field you now tell the plugin to cunstruct the uid out of existing attributes. In the example cunfiguration above this happens by building it out of the 'sn' form field. (which you need to define of course)
 
----+++++ [[LdapGuiHashAttribute][Hashme]]
+---+++++ !Hashme
 
 The plugin comes with the ability to store hashes inside the LDAP. This comes in handy if you want to store hashed passwords which enable users to log in over LDAP. The plugin supports the following types of hashes:
    * SHA
@@ -339,6 +350,7 @@ You want to store the inputs for the userPassword form field as hashes. You want
 }%</verbatim>
 
 If for example a user of your form types in the  value 'abcd12AB' as a password the stored values could be:
+
 <verbatim>
 userPassword: {SHA}2Ky05bDZLtah6bEXwMtPd1ZeUD0=
 userPassword: {SSHA}UJvDy13UQpqPedUIXdPP8whJF8vFbTa6
@@ -396,17 +408,17 @@ You must use a seperate LDAP login. There should be not many different cases how
 
 ---++ Trigger API
 
-It should be possible for specific actions to trigger workflow scripts which deal with associated data after it was successfully written to the LDAP.Possible solutions are:
+It should be possible for specific actions to trigger workflow scripts which deal with associated data after it was successfully written to the LDAP. Possible solutions are:
    * Use a suitable LDAP backend. For slapd there are backends like slapd-sock, slapd-perl or slapd-shell which can be used.
    * If you do not need an instant trigger you could use a cron-job solution with searches.
    * Insert flags into the DIT which indicate that a script needs to get started. Another program (cronjob or something else) could consume the information and trigger events.
    * You use a daemon which communicates directly with LdapGuiPlugin.
-For the last suggestion a simple calling API for daemon based solution is planned.
+For the last suggestion a simple calling API for daemon based solution is planned. For now it is suggested to use an external solution until a safe mechanism for the plugin exists.
 
----++ LdapGuiPlugin defined Macros
+---++ !LdapGuiPlugin defined Macros
 
 The plugin comes with a small set of macros to support e.g. the FormPlugin or display of data.
----+++ LdapGetAttribute
+---+++ !LdapGetAttribute
 
 If you use {UserMappingManager} = Foswiki::Users::LdapUserMapping this macro will fetch the desired attribute for the user who is authorized over the LDAP.
 For example if you want to display a users common name (cn) use:
@@ -419,25 +431,25 @@ Example:
 <verbatim>%LDAPGETATTRIBUTE{attribute="email" max="5"}%</verbatim>
 
 The output could be:
-
 <verbatim>
 email1@domain.com,email2@domain.com,email3@domain.com,email4@domain.com,email5@domain.com</verbatim>
 
    * Set SHORTDESCRIPTION = Interface for building a form based LDAP GUI over Foswiki
 
----++ Tips
+---++ Recommendations
    * Organize your GUI in a own web. This way you can protect them by the configure option "trusted webs", so that requests from other webs won't work. After all it is a plugin, and anyone could use the handlers.
-   * Use the access controls of Foswiki to map to your LDAP ACLs. 
+   * Use the access controls of Foswiki to map to your LDAP ACLs.
    * Play around in the Testmode until everything looks fine.
-   * report bugs
+   * Report bugs
+   * Propose new/missing features
 
 ---++ Plugin Info
 
 |  Plugin Author: | Foswiki:Main.RobertFelber |
 |  Copyright: | ? 2013, Robert Felber |
 |  License: | GPL ( [[http://www.gnu.org/copyleft/gpl.html][GNU General Public License]]) |
-|  Release: | %$RELEASE% |
-|  Version: | %$VERSION% |
+|  Release: | 0.1 |
+|  Version: | 0.1 |
 |  Change History: | <!-- versions below in reverse order --> |
 |  5 March 2013: | Initial version |
 |  Foswiki Dependency: | $Foswiki::Plugins::VERSION 1.1 |
@@ -447,3 +459,4 @@ email1@domain.com,email2@domain.com,email3@domain.com,email4@domain.com,email5@d
 |  Plugin Home: | none |
 |  Feedback: | none |
 __Related Topics:__ [[System.Plugins][Plugins]], %SYSTEMWEB%.DeveloperDocumentationCategory, %SYSTEMWEB%.AdminDocumentationCategory, %SYSTEMWEB%.DefaultPreferences&lt;/verbatim&gt;&lt;/verbatim&gt;
+
