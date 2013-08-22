@@ -3,7 +3,7 @@ package Foswiki::Plugins::LdapGuiPlugin::LdapUtil;
 use strict;
 use warnings;
 
-use Net::LDAP qw(LDAP_REFERRAL);
+use Net::LDAP;
 use Net::LDAP::Extension::SetPassword;
 use Net::LDAP::Entry;
 use Net::LDAP::LDIF;
@@ -462,14 +462,13 @@ sub ldapModify {
                 ];
                 push @$test, "Attributes to replace:";
                 foreach ( keys %{$replace} ) {
-                    if ( ref $replace->{$_} eq "ARRAY" ) {
+					if ( ref $replace->{$_} eq "ARRAY" ) {
                         foreach my $replelem ( @{ $replace->{$_} } ) {
                             push @$test, "replace attribute: $_ => $replelem";
                         }
-                    }
-                    else {
-                        push @$test, "replace attribute: $_ => $replace->{$_}";
-                    }
+                    }else {
+                   	 push @$test, "replace attribute: $_ => $replace->{$_}";
+					}
                 }
 
                 push @$test, "Attributes to add:";
@@ -561,12 +560,11 @@ sub getModifyHash {
     my $entry   = shift;
     my $data    = shift;
     my $opts    = shift;
-    my $modHash = {
-        add     => {},
-        delete  => {},
-        delattr => [],
-        replace => {}
-    };
+    my $modHash = {  add => {}
+                      , delete => {}
+                      , delattr => []
+                      , replace => {} 
+                     };
     return 0 unless ( defined $entry );
     unless ( defined $data ) {
         $data = $this->{attributes};
@@ -580,17 +578,15 @@ sub getModifyHash {
 
         #add
         if ( exists $opts->{add}->{ lc $key } ) {
-
             #check for defined, we only add if there is a value to add
             if ( $size > 1 ) {
                 foreach ( @{ $data->{$key} } ) {
-                    push @{ $modHash->{add}->{$key} }, $_ if ( defined $_ );
+                    push @{ $modHash->{add}->{$key} }, $_ if (defined $_);
                 }
             }
             elsif ( $size == 1 ) {
-
-                $modHash->{add}->{$key} = $data->{$key}->[0]
-                  if ( defined $data->{$key}->[0] );
+                
+                $modHash->{add}->{$key} = $data->{$key}->[0] if (defined $data->{$key}->[0]);
             }
             else {
             }

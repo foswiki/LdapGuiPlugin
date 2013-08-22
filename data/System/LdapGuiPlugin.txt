@@ -25,8 +25,16 @@ But some of the configuration is similar to LdapContrib. In fact, if you install
 ---+++ Required
 
 Perl modules you will need:
-   * CPAN Net::LDAP
-   * CPAN Digest
+
+   * CGI
+   * Crypt::PasswdMD5
+   * Digest::MD5
+   * Digest::SHA
+   * Encode
+   * Fcntl
+   * MIME::Base64
+   * Net::LDAP
+   * URI::Escape
 
 ---+++ Recommended Foswiki extentions
    * FormPlugin: The FormPlugin enables you to build HTML forms with extra features and has a implementation of the foswiki REST interface. Read its description for more Information.
@@ -66,7 +74,7 @@ Before the detailed explanation, here is an overview of the configuration in con
 | {LdapGuiPlugin}{LdapGuiUserBase}  | ['ou=people,dc=my,dc=domain,dc=com'] | List of user bases |
 | {LdapGuiPlugin}{LdapGuiUserBaseAliases}  | <verbatim>{ 
     'people' => 'ou=people,dc=my,dc=domain,dc=com'
-};</verbatim> | user base aliases usable in forms |
+};</verbatim> | User base aliases which are usable in forms by the ldapAddToGroup option. |
 | {LdapGuiPlugin}{LdapGuiLoginAttribute}  | 'uid' | name of the attribute users must use to login |
 | {LdapGuiPlugin}{LdapGuiGroupBase}  | ['ou=group,dc=my,dc=domain,dc=com'] | base of all groups |
 | {LdapGuiPlugin}{LdapGuiAllowProxyUser}  | 0 | allow the plugin to bind against a proxy user to add new users to groups |
@@ -184,7 +192,7 @@ These configurations are not necessary but can be useful to you. These settings 
 
 ---++++ !LdapGuiGlue
 
-This is the configuration for the option called 'LdapGuiGlue'. You can use this option later to construct ('glue together') LDAP attributes out of form data, static strings and/or a format. (e.g.: cn = givenName + sn where givenName and sn are inside the form -&gt; cn will be "glued together" automatically)
+This is the configuration for the option called '!LdapGuiGlue'. You can use this option later to construct ('glue together') LDAP attributes out of form data, static strings and/or a format. (e.g.: cn = givenName + sn where givenName and sn are inside the form -&gt; cn will be "glued together" automatically)
 To do so you need to configure some rules how these attributes should be 'glued together'.
 Gluerules are specified to be a hash containing 2 - 4 parameter keys. Note that this specification will most likely change because it has great potential to be both: extended and simplified.
 
@@ -220,7 +228,7 @@ We want to be able to automatically construct the LDAP attributes 'uid', 'homeDi
    * cn
       1 There have to be two fields named 'LdapFirstName' and 'sn' on the form.
       1 The delimiter should be a space
-      1 cn = LdapFirstName + ' ' + sn
+      1 cn = !LdapFirstName + ' ' + sn
    * uid
       1 There have to be a fiel named sn on the form.
       1 It should be lowercased
@@ -264,7 +272,7 @@ Note:
    * 'asString' is a bitmask.
    * The feature is not flexible enough to contruct multiple values for one attribute automatically.
 
-Now you specified that the function LdapGuiGlue can be used in a form to construct the LDAP attributes uid, homeDirectory and cn. This means for example that if you want to generate the uid you just need to define a form field 'sn'. Now your form must only send the information, that the uid should get constructed with by inserting:
+Now you specified that the function !LdapGuiGlue can be used in a form to construct the LDAP attributes uid, homeDirectory and cn. This means for example that if you want to generate the uid you just need to define a form field 'sn'. Now your form must only send the information, that the uid should get constructed with by inserting:
    * <verbatim><input type="hidden" name="LdapGuiGlue" value="uid"/></verbatim> for simple html or
    * <verbatim>%FORMELEMENT{
    name="LdapGuiGlue"
@@ -290,7 +298,7 @@ The goal of the plugin is to perform LDAP actions preferably by a form submit. I
    * The REST handler must be called on submit with the formfield data as parameters
    * Use the POST method
 
-Deleting entries is not yet implemented and may should not be handled by the plugin in the first place.
+Deleting entries is not yet implemented and may not be handled by the plugin in the first place.
 
 ---+++ Form fields
    * A formfield which represents a LDAP attribute must have the same name as the LDAP attribute. (LDAP attribute: sn =&gt; form field name = sn) Otherwise the plugin will not recognize it.
@@ -318,6 +326,8 @@ Here is an overview of all option fields:
 | !LdapGuiGlue  | Defines which attributes for the current form must get constructed. |
 | !HashMe | Defines which attributes of the current form must get hashed and which methods must be used. |
 | !LdapGuiAddToUserBase | Defines in which userbase the entry must be inserted (if adding a new entry) |
+| !LdapGuiModifyAdd | If you modify an entry you can specify that the value of the formfield should be added to the corresponding LDAP attribute |
+| !LdapGuiModifyDel | If you modify an entry you can specify that the value of the formfield should be deleted from the corresponding LDAP attribute |
 
 ---++++ For all form types available
 ---+++++ !LdapGuiGlue
@@ -359,38 +369,202 @@ userPassword: {MD5}+fcj3ntVthYOpNtHyyu8IQ==
 userPassword: {CRYPT}nw37xSELAvmTI</verbatim>
 
 If you want to store hashed values with forms other than that, you need some perl knowledge. The supported methods for hashing are implemented inside the Hash.pm. Feel free to improve this class or contribute new hash methods to it.
-   * LdapGuiAddToUserBase
 
----+++ Option fields
+---+++ Examples
 
----++++ Example using FormPlugin
+---++++ Example of an add form using FormPlugin
 <verbatim>
+---+ New user
+
+---++ Name
+
 %STARTFORM{
-   name="Mitarbeiterformular"
+   name="AddFormTest"
+   action="rest"
+   method="post"
+   validate="on"
+   strictverification="off"
+   restaction="LdapGuiPlugin/addData"
+  }%
+%FORMELEMENT{
+   name="LdapFirstName"
+   title="the users first name"
+   hint="<br/>Example: John"
+   type="text"
+   value=""
+   mandatory="on"
+   validate="required"
+}%
+%FORMELEMENT{
+   name="sn"
+   title="the users last name"
+   hint="</br>Example: Doe"
+   type="text"
+   value=""
+   mandatory="on"
+   validate="required"
+}%
+
+---++ Location
+
+%FORMELEMENT{
+   name="roomNr"
+   title="room number"
+   hint="<br/>Please set the room number for the new user."
+   type="text"
+   value=""
+   validate="required" 
+}%
+
+---+++ User password
+
+%FORMELEMENT{
+   name="userPassword"
+   title="The userpassword"
+   type="password"
+   value=""
+   mandatory="on"
+   hint="<br/>The new users password"
+   validate="required" 
+}%
+
+---+++ LDAP Login
+
+Please use your LDAP data to verify your identity to submit your entered data.
+----
+
+%FORMELEMENT{
+   name="LdapLoginAttributeName"
+   title="Your Login Name"
+   type="text"
+   value=""
+   mandatory="on"
+   validate="required"
+}%
+%FORMELEMENT{
+   name="LdapLoginPasswordAttributeName"
+   title="Your Password"
+   type="password"
+   mandatory="on"
+   validate="required"
+   value=""
+}%
+
+%FORMELEMENT{
+   name="Submit"
+   type="submit"
+}%
+<!--
+We set objectClasses invisible
+-->
+%FORMELEMENT{
+   name="objectClasses"
+   type="hidden"
+   value="posixAccount, inetOrgPerson, person"
+}%
+<!--
+Also the standard group (100 is an alias for gidNumber defined in {LdapGuiPlugin}{LdapGuiGroupIdentifier})
+-->
+%FORMELEMENT{
+   name="gidNumber"
+   type="hidden"
+   value="100"
+}%
+<!--
+We define the new user gets inserted in 'ou=people,dc=my,dc=domain,dc=com'
+The alias 'people' is defined in {LdapGuiPlugin}{LdapGuiUserBaseAliases}
+-->
+%FORMELEMENT{
+   name="ldapguiaddtouserbase"
+   type="hidden"
+   value="people"
+}%
+<!--
+The attributes cn, mail, homedirectory and uid get constructed by the rules defined in {LdapGuiPlugin}{LdapGuiGlue} for the new user.
+-->
+%FORMELEMENT{
+   name="ldapguiglue"
+   type="hidden"
+   value="cn,mail, homedirectory, uid"
+}%
+<!--
+The values for the userPassword attribute should get saved as hashes. (SHA, SSHA, SMD5, MD5)
+-->
+%FORMELEMENT{
+   name="ldapguitohash"
+   type="hidden"
+   value="userPassword = sha, ssha, smd5, md5"
+}%
+
+%ENDFORM%</verbatim>
+
+---++++ Example of an modify form using FormPlugin
+<verbatim>
+---+ I moved to another office/building
+%STARTFORM{
+   name="Employeeform"
    action="rest"
    method="post"
    validate="on"
    restaction="LdapGuiPlugin/modifyData"
-   redirectto="%BASEWEB%.%BASEUSERTOPIC%"
+   strictverification="off"
 }%
-
+<!--
+Note: myPrinter is not a standard LDAP attribute
+if it is defined by the LDAP schema, the plugin will modify it.
+-->
 %FORMELEMENT{
-   name="LdapAttributeName (for example: cn or CN oder cN..)"
-   title="describing title"
-   type="type (e.g.: select, textfield...)"
-   value=""
+   name="myPrinter"
+   title="your preferred printer:"
+   type="select"
+   value="%LDAPGETATTRIBUTE{attribute="myPrinter"}%"
+   size="5"
    mandatory="off"
-   hint="<br/>Here you can describe what a use should or must do the possibilities are endless, FormPlugin can even validate the input before a submit."
+   options=",printera2 , printerb2, printerc2"
+   labels="No Change, Printer 2nd floor building A, Printer 2nd floor building B, Printer 2nd floor building C"
+   hint="<br/>Here you can change your preferred printer. If you moved to another building for example you surely want to print your stuff there."
 }%
----++ LDAP Login
-You must use a seperate LDAP login. There should be not many different cases how a login has to look like. Name and password must be given to let the plugin verify the identity of the user. Also the plugin needs a uid and a password to bind against.<br /> If you want to know why the name for password is not 'userPassword' read the description to configuration chapter: LdapUserLogin
+%FORMELEMENT{
+   name="roomNr"
+   title="room number:"
+   type="text"
+   value="%LDAPGETATTRIBUTE{attribute="raum"}%"
+   validate="required"
+   hint="<br/>You moved from one room to another? Please change the room number to your current one."
+}%
+%FORMELEMENT{
+   name="telephone"
+   title="telephone:"
+   type="text"
+   value="%LDAPGETATTRIBUTE{attribute="telephone"}%"
+   mandatory="off"
+   validate="required"
+   hint="</br>Change your internal telephone number here."
+}%
+----
+---+++ Ldap Login
+
+Please use your LDAP login name and password to verify your identity. Verify your changes by clicking submit.<br />
+<!--
+value="%LDAPGETATTRIBUTE{attribute="uid"}%" refers to the default value of {LdapGuiPlugin}{LdapGuiLoginSchema}.
+That way a modification is bound to the currently logged in user. (if uid is your login attribute)
+
+This can be changed but if uid is your login attribut the plugin will deny it to be modified.
+If you want to change a foreign entry, you need to provide a full dn to that entry like that:
+      %FORMELEMENT{
+         name="dn"
+         type="text"
+         value="uid=otherGuy;dc=my;dc=domain;dc=com"
+      }%
+-->
 %FORMELEMENT{
    name="uid"
    title="Your ldap login name"
    type="text"
-   value=""
+   value="%LDAPGETATTRIBUTE{attribute="uid"}%"
    validate="required"
 }%
+
 %FORMELEMENT{
    name="LdapLoginPasswordAttributeName"
    title="Your ldap password"
@@ -398,13 +572,52 @@ You must use a seperate LDAP login. There should be not many different cases how
    validate="required"
    value=""
 }%
-
 %FORMELEMENT{
    name="action"
    type="submit"
    buttonlabel="Submit"
 }%
-%ENDFORM%</verbatim>
+%ENDFORM%
+
+</verbatim>
+
+Note:
+If you want a formfield value to be added to an existing set of value you need to mark it over the option LdapGuiModifyAdd.
+The value of that fiel needs to be the name of an LDAP formfield
+Example for mail attribute:
+<verbatim>
+...
+%FORMELEMENT{
+   name="mail"
+   title="mail:"
+   type="text"
+   value=""
+   validate="email"
+   hint="<br/>Your mail."
+}%
+<input name="ldapguimodifyadd" type="hidden" value="email">
+...</verbatim>
+
+If no value is provided in mail it will add nothing and leave the mail attribute for this entry untouched.
+
+If your want to delete a special value you need to mark the formfield with LdapGuiModifyDel.
+Make sure to provide a value because otherwise the whole attribute gets deleted from the entry.
+Example for mail attribute:
+<verbatim>
+...
+%FORMELEMENT{
+   name="mail"
+   title="mail:"
+   type="text"
+   value="example@domain.com"
+   validate="email"
+   hint="<br/>Your mail."
+}%
+<input name="ldapguimodifydel" type="hidden" value="email">
+...</verbatim>
+
+If the plugin finds a value 'example@domain.com' for the current mail attribute, it will delete it.
+Without a value, the attribute mail would be deleted.
 
 ---++ Trigger API
 
